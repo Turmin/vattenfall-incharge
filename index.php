@@ -2,221 +2,376 @@
 
 declare(strict_types=1);
 
-/*
- * Minimal Vattenfall InCharge public station test.
- * No database. No login. No hard-coded personal credentials.
- */
-
-header('Content-Type: application/json; charset=utf-8');
-
-const MOBILE_BASE_URL = 'https://businessspecificapimanglobal.azure-api.net/emobility/';
-const MOBILE_APIM_KEY = '12c7d772faa84b92a8f13a22d7bd8638';
-const APP_ACCEPT = 'application/vnd.emobilitymobile.v16+json';
-const MOBILE_APP_SHA1 = 'aa08ea4e0a721e5a5f8d81f1e7c7fbd87f8d3a5f';
-const MOBILE_APP_CRC = '0';
-
-const DEVICE_BOOTSTRAP_PATH = 'device';
-const STATION_SEARCH_PATH = 'api/charging-points/charging_point/search';
-const NEIGHBOURS_PATH_TEMPLATE = 'api/charging-points/charging_point/%s/neighbours';
-const CHARGING_POINTS_PATH = 'api/charging-points/charging_points';
-
-function jsonOut(array $data, int $statusCode = 200): never
+function fetchApiData(): array
 {
-    http_response_code($statusCode);
-    echo json_encode($data, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
-    exit;
-}
-
-function requestInCharge(
-    string $method,
-    string $path,
-    ?array $body = null,
-    ?string $deviceId = null,
-    ?string $xToken = null
-): array {
-    $url = rtrim(MOBILE_BASE_URL, '/') . '/' . ltrim($path, '/');
-
-    $headers = [
-        'Accept: ' . APP_ACCEPT,
-        'Content-Type: application/json',
-        'User-Agent: Android',
-        'Ocp-Apim-Subscription-Key: ' . MOBILE_APIM_KEY,
-        'Apk-SHA1: ' . MOBILE_APP_SHA1,
-        'Apk-CRC: ' . MOBILE_APP_CRC,
-    ];
-
-    if ($deviceId !== null) {
-        $headers[] = 'Device-Id: ' . $deviceId;
-    }
-
-    if ($xToken !== null) {
-        $headers[] = 'X-Token: ' . $xToken;
-    }
-
-    $ch = curl_init($url);
-
-    curl_setopt_array($ch, [
-        CURLOPT_CUSTOMREQUEST => strtoupper($method),
-        CURLOPT_RETURNTRANSFER => true,
-        CURLOPT_TIMEOUT => 30,
-        CURLOPT_HTTPHEADER => $headers,
-    ]);
-
-    if ($body !== null) {
-        curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($body, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
-    }
-
-    $responseBody = curl_exec($ch);
-
-    if ($responseBody === false) {
-        $error = curl_error($ch);
-        curl_close($ch);
-
-        throw new RuntimeException('cURL error: ' . $error);
-    }
-
-    $statusCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-    curl_close($ch);
-
-    $decoded = json_decode($responseBody, true);
-
-    return [
-        'status_code' => $statusCode,
-        'url' => $url,
-        'raw' => $responseBody,
-        'json' => is_array($decoded) ? $decoded : null,
-    ];
-}
-
-function bootstrapDevice(): array
-{
-    $deviceId = generateUuidV4();
-
-    $response = requestInCharge(
-        'PUT',
-        DEVICE_BOOTSTRAP_PATH,
-        [
-            'brand' => 'nuon',
-            'deviceId' => $deviceId,
-            'language' => 'EN',
-            'locale' => 'en_US',
-            'osVersion' => '37',
-            'pushToken' => 'php-' . generateUuidV4(),
-            'userAgent' => 'android',
-            'versionCode' => 40505180,
-            'versionName' => '4.8.7',
-        ],
-        $deviceId,
-        null
+    $url = sprintf(
+        '%s://%s%s/api.php',
+        (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https' : 'http',
+        $_SERVER['HTTP_HOST'],
+        rtrim(dirname($_SERVER['SCRIPT_NAME']), '/\\')
     );
 
-    if ($response['status_code'] < 200 || $response['status_code'] >= 300) {
-        throw new RuntimeException(
-            'Device bootstrap failed: HTTP ' . $response['status_code'] . ' - ' . $response['raw']
-        );
-    }
+    $json = @file_get_contents($url);
 
-    $xToken = $response['json']['xToken'] ?? null;
-
-    if (!is_string($xToken) || $xToken === '') {
-        throw new RuntimeException('No xToken found. Response: ' . $response['raw']);
-    }
-
-    return [
-        'device_id' => $deviceId,
-        'x_token' => $xToken,
-        'bootstrap_response' => $response['json'],
-    ];
-}
-
-function generateUuidV4(): string
-{
-    $data = random_bytes(16);
-
-    $data[6] = chr((ord($data[6]) & 0x0f) | 0x40);
-    $data[8] = chr((ord($data[8]) & 0x3f) | 0x80);
-
-    return vsprintf('%s%s-%s-%s-%s-%s%s%s', str_split(bin2hex($data), 4));
-}
-
-function searchStation(string $stationName, string $deviceId, string $xToken): array
-{
-    $response = requestInCharge(
-        'POST',
-        STATION_SEARCH_PATH,
-        [
-            'coordinates' => [
-                'latitude' => 37.4219983,
-                'longitude' => -122.084,
-            ],
-            'pagination' => [
-                'pageNumber' => 0,
-                'pageSize' => 40,
-            ],
-            'search' => $stationName,
-        ],
-        $deviceId,
-        $xToken
-    );
-
-    return [
-        'station_name' => $stationName,
-        'status_code' => $response['status_code'],
-        'url' => $response['url'],
-        'data' => $response['json'],
-        'raw' => $response['json'] === null ? $response['raw'] : null,
-    ];
-}
-
-try {
-    $favoritesPath = __DIR__ . '/favo.json';
-
-    if (!is_file($favoritesPath)) {
-        jsonOut(['error' => 'favo.json not found'], 500);
-    }
-
-    $favorites = json_decode((string) file_get_contents($favoritesPath), true);
-
-    if (!is_array($favorites)) {
-        jsonOut(['error' => 'favo.json is invalid JSON'], 500);
-    }
-
-    $session = bootstrapDevice();
-
-    $results = [];
-
-    foreach ($favorites as $favorite) {
-        $stationName = trim((string) ($favorite['name'] ?? ''));
-
-        if ($stationName === '') {
-            continue;
-        }
-
-        $results[] = [
-            'favorite' => $favorite,
-            'incharge' => searchStation(
-                $stationName,
-                $session['device_id'],
-                $session['x_token']
-            ),
+    if ($json === false) {
+        return [
+            'ok' => false,
+            'error' => 'Kon api.php niet ophalen.',
         ];
     }
 
-    jsonOut([
-        'ok' => true,
-        'checked_at' => date(DATE_ATOM),
-        'session' => [
-            'device_id' => $session['device_id'],
-            /*
-             * Deliberately do not expose the full token in output.
-             */
-            'x_token_prefix' => substr($session['x_token'], 0, 8),
-        ],
-        'results' => $results,
-    ]);
-} catch (Throwable $e) {
-    jsonOut([
-        'ok' => false,
-        'error' => $e->getMessage(),
-    ], 500);
+    $data = json_decode($json, true);
+
+    if (!is_array($data)) {
+        return [
+            'ok' => false,
+            'error' => 'api.php gaf geen geldige JSON terug.',
+        ];
+    }
+
+    return $data;
 }
+
+function h(?string $value): string
+{
+    return htmlspecialchars((string) $value, ENT_QUOTES, 'UTF-8');
+}
+
+function formatStatus(string $status): string
+{
+    return match (strtoupper($status)) {
+        'AVAILABLE' => 'Vrij',
+        'OCCUPIED' => 'Bezet',
+        'CHARGING' => 'Aan het laden',
+        'OUT_OF_ORDER' => 'Buiten gebruik',
+        'UNKNOWN' => 'Onbekend',
+        default => ucfirst(strtolower($status)),
+    };
+}
+
+function statusClass(string $status): string
+{
+    return match (strtoupper($status)) {
+        'AVAILABLE' => 'status-available',
+        'OCCUPIED', 'CHARGING' => 'status-occupied',
+        'OUT_OF_ORDER' => 'status-error',
+        default => 'status-unknown',
+    };
+}
+
+function formatDurationFromMinutes(float|int|null $minutes): string
+{
+    if ($minutes === null) {
+        return 'onbekend';
+    }
+
+    $totalMinutes = max(0, (int) floor($minutes));
+    $hours = intdiv($totalMinutes, 60);
+    $remainingMinutes = $totalMinutes % 60;
+
+    if ($hours > 0 && $remainingMinutes > 0) {
+        return $hours . ' u, ' . $remainingMinutes . ' m';
+    }
+
+    if ($hours > 0) {
+        return $hours . ' u';
+    }
+
+    return $remainingMinutes . ' m';
+}
+
+function extractStation(array $result): ?array
+{
+    $data = $result['incharge']['data'] ?? null;
+
+    if (!is_array($data) || !isset($data[0]) || !is_array($data[0])) {
+        return null;
+    }
+
+    return $data[0];
+}
+
+function extractPrice(array $station): string
+{
+    $priceComponents = $station['priceComponents'] ?? null;
+
+    if (!is_array($priceComponents)) {
+        return 'Onbekend';
+    }
+
+    $currency = $priceComponents['currency'] ?? 'EUR';
+    $components = $priceComponents['components'] ?? [];
+
+    $kwhPrice = null;
+    $fixedPrice = null;
+
+    foreach ($components as $component) {
+        $type = strtoupper((string) ($component['type'] ?? ''));
+        $elements = $component['elements'] ?? [];
+
+        if (!is_array($elements) || !isset($elements[0]['price'])) {
+            continue;
+        }
+
+        $price = (float) $elements[0]['price'];
+
+        if ($type === 'KWH') {
+            $kwhPrice = $price;
+        }
+
+        if ($type === 'FIXED') {
+            $fixedPrice = $price;
+        }
+    }
+
+    $parts = [];
+
+    if ($kwhPrice !== null) {
+        $parts[] = number_format($kwhPrice, 4, ',', '.') . ' ' . $currency . '/kWh';
+    }
+
+    if ($fixedPrice !== null && $fixedPrice > 0) {
+        $parts[] = number_format($fixedPrice, 4, ',', '.') . ' ' . $currency . ' vast';
+    }
+
+    return $parts !== [] ? implode(' + ', $parts) : 'Onbekend';
+}
+
+$data = fetchApiData();
+$results = $data['results'] ?? [];
+
+?>
+<!doctype html>
+<html lang="nl">
+<head>
+    <meta charset="utf-8">
+    <title>InCharge laadpalen</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+
+    <style>
+        :root {
+            --bg: #f4f6f8;
+            --card: #ffffff;
+            --text: #17212b;
+            --muted: #667085;
+            --border: #d8dee4;
+            --available: #138a43;
+            --occupied: #c2410c;
+            --error: #b42318;
+            --unknown: #667085;
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            padding: 24px;
+            font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+            background: var(--bg);
+            color: var(--text);
+        }
+
+        .page {
+            max-width: 1100px;
+            margin: 0 auto;
+        }
+
+        .header {
+            margin-bottom: 24px;
+        }
+
+        .header h1 {
+            margin: 0 0 6px;
+            font-size: 28px;
+        }
+
+        .header p {
+            margin: 0;
+            color: var(--muted);
+        }
+
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+            gap: 16px;
+        }
+
+        .card {
+            background: var(--card);
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            padding: 18px;
+            box-shadow: 0 8px 24px rgba(15, 23, 42, 0.06);
+        }
+
+        .card-header {
+            display: flex;
+            justify-content: space-between;
+            gap: 12px;
+            align-items: flex-start;
+            margin-bottom: 16px;
+        }
+
+        .title {
+            font-size: 20px;
+            font-weight: 700;
+            margin: 0;
+        }
+
+        .subtitle {
+            margin: 4px 0 0;
+            color: var(--muted);
+            font-size: 14px;
+        }
+
+        .status {
+            display: inline-flex;
+            align-items: center;
+            border-radius: 999px;
+            padding: 5px 10px;
+            font-size: 13px;
+            font-weight: 700;
+            color: #fff;
+            white-space: nowrap;
+        }
+
+        .status-available {
+            background: var(--available);
+        }
+
+        .status-occupied {
+            background: var(--occupied);
+        }
+
+        .status-error {
+            background: var(--error);
+        }
+
+        .status-unknown {
+            background: var(--unknown);
+        }
+
+        .meta {
+            display: grid;
+            gap: 10px;
+        }
+
+        .row {
+            display: flex;
+            justify-content: space-between;
+            gap: 16px;
+            border-top: 1px solid var(--border);
+            padding-top: 10px;
+        }
+
+        .label {
+            color: var(--muted);
+        }
+
+        .value {
+            font-weight: 600;
+            text-align: right;
+        }
+
+        .error {
+            background: #fff1f0;
+            border: 1px solid #ffccc7;
+            color: #a8071a;
+            padding: 16px;
+            border-radius: 12px;
+        }
+
+        .empty {
+            background: #fff;
+            border: 1px solid var(--border);
+            padding: 16px;
+            border-radius: 12px;
+            color: var(--muted);
+        }
+    </style>
+</head>
+<body>
+<div class="page">
+    <div class="header">
+        <h1>InCharge laadpalen</h1>
+        <p>
+            Laatst gecontroleerd:
+            <?= h($data['checked_at'] ?? date(DATE_ATOM)) ?>
+        </p>
+    </div>
+
+    <?php if (($data['ok'] ?? false) !== true): ?>
+        <div class="error">
+            <?= h($data['error'] ?? 'Onbekende API-fout.') ?>
+        </div>
+    <?php elseif (!is_array($results) || count($results) === 0): ?>
+        <div class="empty">
+            Geen laadpalen gevonden.
+        </div>
+    <?php else: ?>
+        <div class="grid">
+            <?php foreach ($results as $result): ?>
+                <?php
+                $favorite = $result['favorite'] ?? [];
+                $station = extractStation($result);
+
+                $name = (string) ($favorite['name'] ?? 'Onbekend');
+                $label = (string) ($favorite['label'] ?? $name);
+
+                $status = $station['status'] ?? 'UNKNOWN';
+                $status = is_string($status) ? $status : 'UNKNOWN';
+
+                $price = $station ? extractPrice($station) : 'Onbekend';
+
+                $minutes = $result['local_tracking']['minutes_in_current_status'] ?? null;
+                $occupiedSince = formatDurationFromMinutes(is_numeric($minutes) ? (float) $minutes : null);
+                ?>
+                <article class="card">
+                    <div class="card-header">
+                        <div>
+                            <h2 class="title"><?= h($label) ?></h2>
+                            <p class="subtitle"><?= h($name) ?></p>
+                        </div>
+
+                        <span class="status <?= h(statusClass($status)) ?>">
+                            <?= h(formatStatus($status)) ?>
+                        </span>
+                    </div>
+
+                    <div class="meta">
+                        <div class="row">
+                            <span class="label">Naam</span>
+                            <span class="value"><?= h($name) ?></span>
+                        </div>
+
+                        <div class="row">
+                            <span class="label">Label</span>
+                            <span class="value"><?= h($label) ?></span>
+                        </div>
+
+                        <div class="row">
+                            <span class="label">Status</span>
+                            <span class="value"><?= h(formatStatus($status)) ?></span>
+                        </div>
+
+                        <div class="row">
+                            <span class="label">Prijs</span>
+                            <span class="value"><?= h($price) ?></span>
+                        </div>
+
+                        <div class="row">
+                            <span class="label">
+                                <?= strtoupper($status) === 'OCCUPIED' ? 'Bezet sinds' : 'Status sinds' ?>
+                            </span>
+                            <span class="value"><?= h($occupiedSince) ?></span>
+                        </div>
+                    </div>
+                </article>
+            <?php endforeach; ?>
+        </div>
+    <?php endif; ?>
+</div>
+</body>
+</html>
