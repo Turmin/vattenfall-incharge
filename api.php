@@ -9,6 +9,9 @@ declare(strict_types=1);
 
 header('Content-Type: application/json; charset=utf-8');
 
+/*
+ * InCharge mobile API configuration.
+ */
 const MOBILE_BASE_URL = 'https://businessspecificapimanglobal.azure-api.net/emobility/';
 const MOBILE_APIM_KEY = '12c7d772faa84b92a8f13a22d7bd8638';
 const APP_ACCEPT = 'application/vnd.emobilitymobile.v16+json';
@@ -17,6 +20,13 @@ const MOBILE_APP_CRC = '0';
 
 const DEVICE_BOOTSTRAP_PATH = 'device';
 const STATION_SEARCH_PATH = 'api/charging-points/charging_point/search';
+
+/*
+ * Local file configuration.
+ */
+const FAVORITES_FILE = 'favo.json';
+const SESSION_CACHE_FILE = 'session-cache.json';
+const STATUS_CACHE_FILE = 'status-cache.json';
 
 function jsonOut(array $data, int $statusCode = 200)
 {
@@ -40,9 +50,19 @@ function generateUuidV4(): string
     return vsprintf('%s%s-%s-%s-%s-%s%s%s', str_split(bin2hex($data), 4));
 }
 
+function getFavoritesFile(): string
+{
+    return __DIR__ . '/' . FAVORITES_FILE;
+}
+
 function getSessionCacheFile(): string
 {
-    return __DIR__ . '/session-cache.json';
+    return __DIR__ . '/' . SESSION_CACHE_FILE;
+}
+
+function getStatusCacheFile(): string
+{
+    return __DIR__ . '/' . STATUS_CACHE_FILE;
 }
 
 function loadInChargeSession(): ?array
@@ -206,7 +226,9 @@ function bootstrapDevice(): array
     $xToken = $json['xToken'] ?? null;
 
     if (!is_string($xToken) || $xToken === '') {
-        throw new RuntimeException('Device bootstrap succeeded, but no xToken was found. Response: ' . $response['raw']);
+        throw new RuntimeException(
+            'Device bootstrap succeeded, but no xToken was found. Response: ' . $response['raw']
+        );
     }
 
     return [
@@ -310,7 +332,7 @@ function getCurrentStatusFromResult(array $result): string
 
 function updateStatusCache(array $results): array
 {
-    $cacheFile = __DIR__ . '/status-cache.json';
+    $cacheFile = getStatusCacheFile();
     $now = date(DATE_ATOM);
 
     $cache = [];
@@ -372,7 +394,10 @@ function updateStatusCache(array $results): array
 
     file_put_contents(
         $cacheFile,
-        json_encode($cache, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE),
+        json_encode(
+            $cache,
+            JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE
+        ),
         LOCK_EX
     );
 
@@ -380,12 +405,13 @@ function updateStatusCache(array $results): array
 }
 
 try {
-    $favoritesPath = __DIR__ . '/favorieten.json';
+    $favoritesPath = getFavoritesFile();
 
     if (!is_file($favoritesPath)) {
         jsonOut([
             'ok' => false,
-            'error' => 'favorieten.json not found',
+            'error' => FAVORITES_FILE . ' not found',
+            'expected_path' => $favoritesPath,
         ], 500);
     }
 
@@ -394,7 +420,8 @@ try {
     if (!is_array($favorites)) {
         jsonOut([
             'ok' => false,
-            'error' => 'favorieten.json is invalid JSON',
+            'error' => FAVORITES_FILE . ' is invalid JSON',
+            'expected_path' => $favoritesPath,
         ], 500);
     }
 
@@ -419,6 +446,11 @@ try {
     jsonOut([
         'ok' => true,
         'checked_at' => date(DATE_ATOM),
+        'files' => [
+            'favorites' => FAVORITES_FILE,
+            'session_cache' => SESSION_CACHE_FILE,
+            'status_cache' => STATUS_CACHE_FILE,
+        ],
         'session' => [
             'device_id' => $session['device_id'],
             'x_token_prefix' => substr($session['x_token'], 0, 8),
