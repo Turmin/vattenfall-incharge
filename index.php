@@ -2,21 +2,34 @@
 
 declare(strict_types=1);
 
+/*
+ * Simple InCharge dashboard.
+ * Reads local api.php and renders favorite charging points.
+ */
+
 function fetchApiData(): array
 {
-    $url = sprintf(
-        '%s://%s%s/api.php',
-        (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https' : 'http',
-        $_SERVER['HTTP_HOST'],
-        rtrim(dirname($_SERVER['SCRIPT_NAME']), '/\\')
-    );
+    $apiPath = __DIR__ . '/api.php';
+
+    if (!is_file($apiPath)) {
+        return [
+            'ok' => false,
+            'error' => 'api.php niet gevonden.',
+        ];
+    }
+
+    $scheme = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https' : 'http';
+    $host = $_SERVER['HTTP_HOST'] ?? 'localhost';
+    $directory = rtrim(dirname($_SERVER['SCRIPT_NAME']), '/\\');
+
+    $url = $scheme . '://' . $host . $directory . '/api.php';
 
     $json = @file_get_contents($url);
 
     if ($json === false) {
         return [
             'ok' => false,
-            'error' => 'Kon api.php niet ophalen.',
+            'error' => 'Kon api.php niet ophalen via ' . $url,
         ];
     }
 
@@ -26,13 +39,14 @@ function fetchApiData(): array
         return [
             'ok' => false,
             'error' => 'api.php gaf geen geldige JSON terug.',
+            'raw' => $json,
         ];
     }
 
     return $data;
 }
 
-function h(?string $value): string
+function h($value): string
 {
     return htmlspecialchars((string) $value, ENT_QUOTES, 'UTF-8');
 }
@@ -50,6 +64,8 @@ function formatStatus(string $status): string
             return 'Aan het laden';
 
         case 'OUT_OF_ORDER':
+        case 'OUTOFORDER':
+        case 'FAULTED':
             return 'Buiten gebruik';
 
         case 'UNKNOWN':
@@ -71,6 +87,8 @@ function statusClass(string $status): string
             return 'status-occupied';
 
         case 'OUT_OF_ORDER':
+        case 'OUTOFORDER':
+        case 'FAULTED':
             return 'status-error';
 
         default:
@@ -125,10 +143,18 @@ function extractPrice(array $station): string
     $fixedPrice = null;
 
     foreach ($components as $component) {
+        if (!is_array($component)) {
+            continue;
+        }
+
         $type = strtoupper((string) ($component['type'] ?? ''));
         $elements = $component['elements'] ?? [];
 
-        if (!is_array($elements) || !isset($elements[0]['price'])) {
+        if (!is_array($elements) || !isset($elements[0]) || !is_array($elements[0])) {
+            continue;
+        }
+
+        if (!isset($elements[0]['price']) || !is_numeric($elements[0]['price'])) {
             continue;
         }
 
@@ -156,6 +182,21 @@ function extractPrice(array $station): string
     return $parts !== [] ? implode(' + ', $parts) : 'Onbekend';
 }
 
+function getStatusFromResult(array $result, ?array $station): string
+{
+    if (is_array($station) && isset($station['status']) && is_string($station['status'])) {
+        return strtoupper($station['status']);
+    }
+
+    $trackingStatus = $result['local_tracking']['status'] ?? null;
+
+    if (is_string($trackingStatus) && $trackingStatus !== '') {
+        return strtoupper($trackingStatus);
+    }
+
+    return 'UNKNOWN';
+}
+
 $data = fetchApiData();
 $results = $data['results'] ?? [];
 
@@ -166,6 +207,8 @@ $results = $data['results'] ?? [];
     <meta charset="utf-8">
     <title>InCharge laadpalen</title>
     <meta name="viewport" content="width=device-width, initial-scale=1">
+
+    <meta http-equiv="refresh" content="60">
 
     <style>
         :root {
@@ -213,7 +256,7 @@ $results = $data['results'] ?? [];
 
         .grid {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+            grid-template-columns: repeat(auto-fit, minmax(270px, 1fr));
             gap: 16px;
         }
 
@@ -294,12 +337,18 @@ $results = $data['results'] ?? [];
             text-align: right;
         }
 
+        .small {
+            font-size: 13px;
+            color: var(--muted);
+        }
+
         .error {
             background: #fff1f0;
             border: 1px solid #ffccc7;
             color: #a8071a;
             padding: 16px;
             border-radius: 12px;
+            white-space: pre-wrap;
         }
 
         .empty {
@@ -333,19 +382,24 @@ $results = $data['results'] ?? [];
         <div class="grid">
             <?php foreach ($results as $result): ?>
                 <?php
+                if (!is_array($result)) {
+                    continue;
+                }
+
                 $favorite = $result['favorite'] ?? [];
                 $station = extractStation($result);
 
                 $name = (string) ($favorite['name'] ?? 'Onbekend');
                 $label = (string) ($favorite['label'] ?? $name);
 
-                $status = $station['status'] ?? 'UNKNOWN';
-                $status = is_string($status) ? $status : 'UNKNOWN';
-
+                $status = getStatusFromResult($result, $station);
                 $price = $station ? extractPrice($station) : 'Onbekend';
 
                 $minutes = $result['local_tracking']['minutes_in_current_status'] ?? null;
-                $occupiedSince = formatDurationFromMinutes(is_numeric($minutes) ? (float) $minutes : null);
+                $duration = formatDurationFromMinutes($minutes);
+
+                $statusCode = $result['incharge']['status_code'] ?? null;
+                $attempt = $result['incharge']['attempt'] ?? null;
                 ?>
                 <article class="card">
                     <div class="card-header">
@@ -384,7 +438,14 @@ $results = $data['results'] ?? [];
                             <span class="label">
                                 <?= strtoupper($status) === 'OCCUPIED' ? 'Bezet sinds' : 'Status sinds' ?>
                             </span>
-                            <span class="value"><?= h($occupiedSince) ?></span>
+                            <span class="value"><?= h($duration) ?></span>
+                        </div>
+
+                        <div class="row">
+                            <span class="label">API</span>
+                            <span class="value small">
+                                HTTP <?= h($statusCode ?? '-') ?><?= $attempt ? ', poging ' . h($attempt) : '' ?>
+                            </span>
                         </div>
                     </div>
                 </article>
