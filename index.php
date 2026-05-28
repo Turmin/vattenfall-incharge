@@ -15,12 +15,10 @@ const APP_ACCEPT = 'application/vnd.emobilitymobile.v16+json';
 const MOBILE_APP_SHA1 = 'aa08ea4e0a721e5a5f8d81f1e7c7fbd87f8d3a5f';
 const MOBILE_APP_CRC = '0';
 
-/*
- * These paths may need adjustment after checking the exact Python method
- * async_bootstrap_device() and async_collect_station_points().
- */
-const DEVICE_BOOTSTRAP_PATH = 'devices';
-const STATION_SEARCH_PATH = 'charging-points/search';
+const DEVICE_BOOTSTRAP_PATH = 'device';
+const STATION_SEARCH_PATH = 'api/charging-points/charging_point/search';
+const NEIGHBOURS_PATH_TEMPLATE = 'api/charging-points/charging_point/%s/neighbours';
+const CHARGING_POINTS_PATH = 'api/charging-points/charging_points';
 
 function jsonOut(array $data, int $statusCode = 200): never
 {
@@ -92,62 +90,70 @@ function requestInCharge(
 
 function bootstrapDevice(): array
 {
-    /*
-     * The integration creates a local anonymous device session.
-     * If this endpoint path is wrong, the response will show the HTTP error.
-     */
-    $deviceId = bin2hex(random_bytes(16));
+    $deviceId = generateUuidV4();
 
     $response = requestInCharge(
-        'POST',
+        'PUT',
         DEVICE_BOOTSTRAP_PATH,
         [
+            'brand' => 'nuon',
             'deviceId' => $deviceId,
-            'platform' => 'Android',
+            'language' => 'EN',
+            'locale' => 'en_US',
+            'osVersion' => '37',
+            'pushToken' => 'php-' . generateUuidV4(),
+            'userAgent' => 'android',
+            'versionCode' => 40505180,
+            'versionName' => '4.8.7',
         ],
         $deviceId,
         null
     );
 
     if ($response['status_code'] < 200 || $response['status_code'] >= 300) {
-        throw new RuntimeException('Device bootstrap failed: HTTP ' . $response['status_code'] . ' - ' . $response['raw']);
+        throw new RuntimeException(
+            'Device bootstrap failed: HTTP ' . $response['status_code'] . ' - ' . $response['raw']
+        );
     }
 
-    /*
-     * We do not know the exact field name until we see the real response.
-     * Try common possibilities.
-     */
-    $json = $response['json'] ?? [];
-
-    $xToken =
-        $json['xToken']
-        ?? $json['x_token']
-        ?? $json['token']
-        ?? $json['accessToken']
-        ?? null;
+    $xToken = $response['json']['xToken'] ?? null;
 
     if (!is_string($xToken) || $xToken === '') {
-        throw new RuntimeException('Device bootstrap succeeded, but no token field was found. Response: ' . $response['raw']);
+        throw new RuntimeException('No xToken found. Response: ' . $response['raw']);
     }
 
     return [
         'device_id' => $deviceId,
         'x_token' => $xToken,
-        'bootstrap_response' => $json,
+        'bootstrap_response' => $response['json'],
     ];
+}
+
+function generateUuidV4(): string
+{
+    $data = random_bytes(16);
+
+    $data[6] = chr((ord($data[6]) & 0x0f) | 0x40);
+    $data[8] = chr((ord($data[8]) & 0x3f) | 0x80);
+
+    return vsprintf('%s%s-%s-%s-%s-%s%s%s', str_split(bin2hex($data), 4));
 }
 
 function searchStation(string $stationName, string $deviceId, string $xToken): array
 {
-    /*
-     * The Home Assistant integration searches by visible charging point name,
-     * for example AB1234 or XY6789.
-     */
     $response = requestInCharge(
         'POST',
         STATION_SEARCH_PATH,
         [
-            'searchTerm' => $stationName,
+            'coordinates' => [
+                'latitude' => 37.4219983,
+                'longitude' => -122.084,
+            ],
+            'pagination' => [
+                'pageNumber' => 0,
+                'pageSize' => 40,
+            ],
+            'search' => $stationName,
         ],
         $deviceId,
         $xToken
