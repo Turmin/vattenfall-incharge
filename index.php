@@ -39,33 +39,52 @@ function h(?string $value): string
 
 function formatStatus(string $status): string
 {
-    return match (strtoupper($status)) {
-        'AVAILABLE' => 'Vrij',
-        'OCCUPIED' => 'Bezet',
-        'CHARGING' => 'Aan het laden',
-        'OUT_OF_ORDER' => 'Buiten gebruik',
-        'UNKNOWN' => 'Onbekend',
-        default => ucfirst(strtolower($status)),
-    };
+    switch (strtoupper($status)) {
+        case 'AVAILABLE':
+            return 'Vrij';
+
+        case 'OCCUPIED':
+            return 'Bezet';
+
+        case 'CHARGING':
+            return 'Aan het laden';
+
+        case 'OUT_OF_ORDER':
+            return 'Buiten gebruik';
+
+        case 'UNKNOWN':
+            return 'Onbekend';
+
+        default:
+            return ucfirst(strtolower($status));
+    }
 }
 
 function statusClass(string $status): string
 {
-    return match (strtoupper($status)) {
-        'AVAILABLE' => 'status-available',
-        'OCCUPIED', 'CHARGING' => 'status-occupied',
-        'OUT_OF_ORDER' => 'status-error',
-        default => 'status-unknown',
-    };
+    switch (strtoupper($status)) {
+        case 'AVAILABLE':
+            return 'status-available';
+
+        case 'OCCUPIED':
+        case 'CHARGING':
+            return 'status-occupied';
+
+        case 'OUT_OF_ORDER':
+            return 'status-error';
+
+        default:
+            return 'status-unknown';
+    }
 }
 
-function formatDurationFromMinutes(float|int|null $minutes): string
+function formatDurationFromMinutes($minutes): string
 {
-    if ($minutes === null) {
+    if ($minutes === null || !is_numeric($minutes)) {
         return 'onbekend';
     }
 
-    $totalMinutes = max(0, (int) floor($minutes));
+    $totalMinutes = max(0, (int) floor((float) $minutes));
     $hours = intdiv($totalMinutes, 60);
     $remainingMinutes = $totalMinutes % 60;
 
