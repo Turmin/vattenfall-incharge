@@ -32,10 +32,15 @@ final class Schema
 
     public static function tableExists(PDO $pdo, string $table): bool
     {
-        $stmt = $pdo->prepare('SHOW TABLES LIKE :table_name');
+        $stmt = $pdo->prepare('
+            SELECT COUNT(*)
+            FROM information_schema.tables
+            WHERE table_schema = DATABASE()
+              AND table_name = :table_name
+        ');
         $stmt->execute([':table_name' => $table]);
 
-        return (bool)$stmt->fetchColumn();
+        return (int)$stmt->fetchColumn() > 0;
     }
 
     public static function stats(PDO $pdo): array
@@ -80,20 +85,23 @@ final class Schema
 
     public static function seedDefaultCronJob(PDO $pdo)
     {
-        $pdo->exec("
+        $count = (int)$pdo->query('SELECT COUNT(*) FROM incharge_cron_jobs')->fetchColumn();
+
+        if ($count > 0) {
+            return;
+        }
+
+        $stmt = $pdo->prepare('
             INSERT INTO incharge_cron_jobs
                 (name, task, schedule, enabled, created_at, updated_at)
-            SELECT
-                'Poll InCharge availability',
-                'poll',
-                '*/5 * * * *',
-                0,
-                NOW(),
-                NOW()
-            WHERE NOT EXISTS (
-                SELECT 1 FROM incharge_cron_jobs
-            )
-        ");
+            VALUES
+                (:name, :task, :schedule, 0, NOW(), NOW())
+        ');
+        $stmt->execute([
+            ':name' => 'Poll InCharge availability',
+            ':task' => 'poll',
+            ':schedule' => '*/5 * * * *',
+        ]);
     }
 
     private static function statements(): array
@@ -122,7 +130,7 @@ final class Schema
                     available_connectors INT NULL,
                     occupied_connectors INT NULL,
                     total_connectors INT NULL,
-                    raw_json JSON NULL,
+                    raw_json LONGTEXT NULL,
                     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
                     INDEX idx_favorite_time (favorite_id, measured_at),
                     INDEX idx_favorite_status_time (favorite_id, status_bucket, measured_at),

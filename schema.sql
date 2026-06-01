@@ -19,7 +19,7 @@ CREATE TABLE IF NOT EXISTS incharge_chargepoint_snapshots (
     available_connectors INT NULL,
     occupied_connectors INT NULL,
     total_connectors INT NULL,
-    raw_json JSON NULL,
+    raw_json LONGTEXT NULL,
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     INDEX idx_favorite_time (favorite_id, measured_at),
     INDEX idx_favorite_status_time (favorite_id, status_bucket, measured_at),
