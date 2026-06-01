@@ -465,7 +465,7 @@ $selectedFavorite = $favoriteById[$selectedFavoriteId] ?? null;
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/chart.js@3.9.1/dist/chart.min.js"></script>
-<script src="assets/availability-chart.js"></script>
+<script src="js/availability-chart.js"></script>
 <script>
 (function () {
     const chartApi = window.InChargeAvailabilityChart;

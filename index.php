@@ -480,11 +480,18 @@ $chargepoints = $data['chargepoints'] ?? [];
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/chart.js@3.9.1/dist/chart.min.js"></script>
-<script src="assets/availability-chart.js"></script>
+<script src="js/availability-chart.js"></script>
 <script>
 document.querySelectorAll('[data-availability-chart]').forEach(function (canvas) {
     const favoriteId = canvas.dataset.availabilityChart;
     const summary = document.querySelector('[data-availability-summary="' + favoriteId + '"]');
+
+    if (!window.InChargeAvailabilityChart) {
+        if (summary) {
+            summary.textContent = 'Grafiek niet geladen';
+        }
+        return;
+    }
 
     window.InChargeAvailabilityChart.load(canvas, {
         summaryElement: summary
