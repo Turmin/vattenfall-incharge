@@ -2,6 +2,11 @@
 
 declare(strict_types=1);
 
+if (PHP_SAPI !== 'cli') {
+    header('Location: admin/', true, 302);
+    exit;
+}
+
 require __DIR__ . '/src/Database.php';
 require __DIR__ . '/src/Schema.php';
 require __DIR__ . '/src/FavoriteRepository.php';

@@ -16,7 +16,7 @@ date_default_timezone_set((string)($config['timezone'] ?? date_default_timezone_
 $pdo = Database::connect($config);
 
 if (!Schema::tablesExist($pdo)) {
-    throw new RuntimeException('Database tables are missing. Run setup.php first.');
+    throw new RuntimeException('Database tables are missing. Use admin setup first.');
 }
 
 $favorites = new FavoriteRepository($pdo);

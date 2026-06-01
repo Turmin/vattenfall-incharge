@@ -101,7 +101,7 @@ function loadDashboardData(array $config): array
         if (!Schema::tablesExist($pdo)) {
             return [
                 'success' => false,
-                'error' => 'Database tabellen ontbreken. Draai setup.php om tabellen aan te maken en favo.json te importeren.',
+                'error' => 'Database tabellen ontbreken. Gebruik de admin om tabellen aan te maken en favo.json te importeren.',
                 'setup_required' => true,
             ];
         }
@@ -401,7 +401,6 @@ $chargepoints = $data['chargepoints'] ?? [];
             <p>Laatst geladen: <?= h($data['checked_at'] ?? date(DATE_ATOM)) ?></p>
         </div>
         <div class="actions">
-            <a class="button" href="setup.php">Setup</a>
             <a class="button" href="admin/">Admin</a>
             <a class="button primary" href="api/status.php">API</a>
         </div>

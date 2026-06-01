@@ -16,9 +16,17 @@ final class InChargeClient
         $chargepointName = FavoriteRepository::normalizeChargepointName($chargepointName);
         $session = $this->getOrCreateSession();
         $search = $this->searchStationWithSessionRefresh($chargepointName, $session);
-        $station = $this->firstStationFromSearch($search);
-        $status = Status::normalize(is_array($station) ? (string)($station['status'] ?? 'UNKNOWN') : 'UNKNOWN');
+        $station = $this->firstStationFromSearch($search, $chargepointName);
+        $status = Status::normalize($this->stationStatus($station));
         $counts = Status::connectorCountsFromStation($station, $status);
+
+        if (Status::bucket($status) === 'unknown' && (int)($counts['total_connectors'] ?? 0) > 0) {
+            if ((int)($counts['available_connectors'] ?? 0) > 0) {
+                $status = 'AVAILABLE';
+            } elseif ((int)($counts['occupied_connectors'] ?? 0) > 0) {
+                $status = 'OCCUPIED';
+            }
+        }
 
         return [
             'status' => $status,
@@ -218,15 +226,80 @@ final class InChargeClient
         ];
     }
 
-    private function firstStationFromSearch(array $search)
+    private function firstStationFromSearch(array $search, string $chargepointName)
     {
-        $data = $search['data']['data'] ?? null;
+        $candidates = $this->stationCandidates($search['data'] ?? null);
 
-        if (!is_array($data) || !isset($data[0]) || !is_array($data[0])) {
+        if ($candidates === []) {
             return null;
         }
 
-        return $data[0];
+        foreach ($candidates as $candidate) {
+            if ($this->stationMatchesChargepointName($candidate, $chargepointName)) {
+                return $candidate;
+            }
+        }
+
+        return $candidates[0];
+    }
+
+    private function stationCandidates($response): array
+    {
+        if (!is_array($response)) {
+            return [];
+        }
+
+        if (isset($response[0]) && is_array($response[0])) {
+            return array_values(array_filter($response, 'is_array'));
+        }
+
+        foreach (['data', 'items', 'results', 'chargingPoints', 'charging_points', 'stations'] as $key) {
+            if (isset($response[$key]) && is_array($response[$key])) {
+                if (isset($response[$key][0]) && is_array($response[$key][0])) {
+                    return array_values(array_filter($response[$key], 'is_array'));
+                }
+
+                $nested = $this->stationCandidates($response[$key]);
+
+                if ($nested !== []) {
+                    return $nested;
+                }
+            }
+        }
+
+        return [];
+    }
+
+    private function stationMatchesChargepointName(array $station, string $chargepointName): bool
+    {
+        $chargepointName = FavoriteRepository::normalizeChargepointName($chargepointName);
+
+        foreach (['name', 'id', 'identity', 'stationName', 'chargingPointId', 'chargePointId', 'publicId', 'externalId'] as $key) {
+            if (!isset($station[$key]) || !is_scalar($station[$key])) {
+                continue;
+            }
+
+            if (FavoriteRepository::normalizeChargepointName((string)$station[$key]) === $chargepointName) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private function stationStatus($station): string
+    {
+        if (!is_array($station)) {
+            return 'UNKNOWN';
+        }
+
+        foreach (['status', 'state', 'availability', 'availabilityStatus', 'connectorStatus'] as $key) {
+            if (isset($station[$key]) && is_scalar($station[$key])) {
+                return (string)$station[$key];
+            }
+        }
+
+        return 'UNKNOWN';
     }
 
     private function priceLabel($station)

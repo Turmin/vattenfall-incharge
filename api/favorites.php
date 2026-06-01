@@ -14,7 +14,7 @@ try {
     $pdo = Database::connect($config);
 
     if (!Schema::tablesExist($pdo)) {
-        ApiResponse::error('Database tables are missing. Run setup.php first.', 503);
+        ApiResponse::error('Database tables are missing. Use admin setup first.', 503);
     }
 
     $favorites = new FavoriteRepository($pdo);
