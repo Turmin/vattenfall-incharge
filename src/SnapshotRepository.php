@@ -68,6 +68,14 @@ final class SnapshotRepository
         $now = time();
 
         foreach ($rows as &$row) {
+            if ((string)($row['status_bucket'] ?? '') === 'unknown') {
+                $known = $this->latestKnownForFavorite((int)$row['favorite_id']);
+
+                if (is_array($known)) {
+                    $row = $known;
+                }
+            }
+
             $state = $this->statusSince((int)$row['favorite_id'], (int)$row['id'], (string)$row['status_bucket']);
             $row['status_since'] = $state['status_since'];
             $row['seconds_in_current_status'] = max(0, $now - strtotime((string)$state['status_since']));
@@ -91,6 +99,14 @@ final class SnapshotRepository
 
         if (!is_array($row)) {
             return null;
+        }
+
+        if ((string)($row['status_bucket'] ?? '') === 'unknown') {
+            $known = $this->latestKnownForFavorite((int)$row['favorite_id']);
+
+            if (is_array($known)) {
+                $row = $known;
+            }
         }
 
         $state = $this->statusSince((int)$row['favorite_id'], (int)$row['id'], (string)$row['status_bucket']);
@@ -227,6 +243,22 @@ final class SnapshotRepository
             ':favorite_id' => $favoriteId,
             ':before_date' => $before,
         ]);
+        $row = $stmt->fetch();
+
+        return is_array($row) ? $row : null;
+    }
+
+    private function latestKnownForFavorite(int $favoriteId)
+    {
+        $stmt = $this->pdo->prepare(
+            "SELECT *
+             FROM incharge_chargepoint_snapshots
+             WHERE favorite_id = :favorite_id
+               AND status_bucket <> 'unknown'
+             ORDER BY measured_at DESC, id DESC
+             LIMIT 1"
+        );
+        $stmt->execute([':favorite_id' => $favoriteId]);
         $row = $stmt->fetch();
 
         return is_array($row) ? $row : null;

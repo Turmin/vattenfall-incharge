@@ -150,6 +150,11 @@ $chargepoints = $data['chargepoints'] ?? [];
     <title>InCharge laadpalen</title>
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta http-equiv="refresh" content="60">
+    <link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32x32.png">
+    <link rel="icon" type="image/png" sizes="16x16" href="icons/favicon-16x16.png">
+    <link rel="shortcut icon" href="icons/favicon.ico">
+    <link rel="apple-touch-icon" sizes="180x180" href="icons/apple-touch-icon.png">
+    <link rel="manifest" href="icons/site.webmanifest">
     <style>
         :root {
             --bg: #eef3f8;
@@ -223,31 +228,6 @@ $chargepoints = $data['chargepoints'] ?? [];
             background: var(--primary);
             border-color: var(--primary);
             color: #fff;
-        }
-
-        .summary {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-            gap: 12px;
-            margin-bottom: 16px;
-        }
-
-        .summary-item {
-            background: #fff;
-            border: 1px solid var(--border);
-            border-radius: 8px;
-            padding: 12px;
-        }
-
-        .summary-item div:first-child {
-            color: var(--muted);
-            font-size: 13px;
-        }
-
-        .summary-item strong {
-            display: block;
-            margin-top: 4px;
-            font-size: 20px;
         }
 
         .grid {
@@ -378,6 +358,13 @@ $chargepoints = $data['chargepoints'] ?? [];
             white-space: pre-wrap;
         }
 
+        .page-footer {
+            margin-top: 18px;
+            color: var(--muted);
+            font-size: 12px;
+            text-align: center;
+        }
+
         @media (max-width: 640px) {
             body {
                 padding: 16px;
@@ -402,7 +389,6 @@ $chargepoints = $data['chargepoints'] ?? [];
         </div>
         <div class="actions">
             <a class="button" href="admin/">Admin</a>
-            <a class="button primary" href="api/status.php">API</a>
         </div>
     </div>
 
@@ -412,24 +398,9 @@ $chargepoints = $data['chargepoints'] ?? [];
         </div>
     <?php elseif (!is_array($chargepoints) || count($chargepoints) === 0): ?>
         <div class="empty">
-            Geen actieve laadpalen gevonden. Voeg favorieten toe via admin of importeer favo.json via setup.
+            Geen actieve laadpalen gevonden. Voeg favorieten toe of importeer favo.json via admin.
         </div>
     <?php else: ?>
-        <div class="summary">
-            <div class="summary-item">
-                <div>Actieve laadpalen</div>
-                <strong><?= h($data['stats']['active_favorites'] ?? count($chargepoints)) ?></strong>
-            </div>
-            <div class="summary-item">
-                <div>Snapshots</div>
-                <strong><?= h($data['stats']['snapshots'] ?? 0) ?></strong>
-            </div>
-            <div class="summary-item">
-                <div>Laatste meting</div>
-                <strong><?= h(formatDateTime($data['stats']['latest_snapshot_at'] ?? null)) ?></strong>
-            </div>
-        </div>
-
         <div class="grid">
             <?php foreach ($chargepoints as $item): ?>
                 <?php
@@ -485,6 +456,12 @@ $chargepoints = $data['chargepoints'] ?? [];
                 </article>
             <?php endforeach; ?>
         </div>
+    <?php endif; ?>
+
+    <?php if (($data['success'] ?? false) === true): ?>
+        <footer class="page-footer">
+            Laatste meting: <?= h(formatDateTime($data['stats']['latest_snapshot_at'] ?? null)) ?>
+        </footer>
     <?php endif; ?>
 </div>
 
