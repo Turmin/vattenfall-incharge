@@ -16,9 +16,26 @@ final class InChargeClient
         $chargepointName = FavoriteRepository::normalizeChargepointName($chargepointName);
         $session = $this->getOrCreateSession();
         $search = $this->searchStationWithSessionRefresh($chargepointName, $session);
-        $station = $this->firstStationFromSearch($search);
-        $status = Status::normalize(is_array($station) ? (string)($station['status'] ?? 'UNKNOWN') : 'UNKNOWN');
+        $station = $this->firstStationFromSearch($search, $chargepointName);
+
+        if (!is_array($station)) {
+            throw new RuntimeException('No InCharge station found for ' . $chargepointName);
+        }
+
+        $status = Status::normalize($this->stationStatus($station));
         $counts = Status::connectorCountsFromStation($station, $status);
+
+        if (Status::bucket($status) === 'unknown' && (int)($counts['total_connectors'] ?? 0) > 0) {
+            if ((int)($counts['available_connectors'] ?? 0) > 0) {
+                $status = 'AVAILABLE';
+            } elseif ((int)($counts['occupied_connectors'] ?? 0) > 0) {
+                $status = 'OCCUPIED';
+            }
+        }
+
+        if (Status::bucket($status) === 'unknown') {
+            throw new RuntimeException('InCharge status is unknown for ' . $chargepointName);
+        }
 
         return [
             'status' => $status,
@@ -79,6 +96,10 @@ final class InChargeClient
 
         if ((int)$response['status_code'] !== 401 && ((int)$response['status_code'] < 200 || (int)$response['status_code'] >= 300)) {
             throw new RuntimeException('InCharge search failed: HTTP ' . $response['status_code']);
+        }
+
+        if ((int)$response['status_code'] >= 200 && (int)$response['status_code'] < 300 && !is_array($response['json'])) {
+            throw new RuntimeException('InCharge search returned invalid JSON.');
         }
 
         return [
@@ -167,66 +188,189 @@ final class InChargeClient
             throw new RuntimeException('The PHP cURL extension is required.');
         }
 
-        $url = rtrim((string)$this->inchargeConfig('base_url'), '/') . '/' . ltrim($path, '/');
-        $headers = [
-            'Accept: ' . $this->inchargeConfig('accept'),
-            'Content-Type: application/json',
-            'User-Agent: Android',
-            'Ocp-Apim-Subscription-Key: ' . $this->inchargeConfig('subscription_key'),
-            'Apk-SHA1: ' . $this->inchargeConfig('apk_sha1'),
-            'Apk-CRC: ' . $this->inchargeConfig('apk_crc'),
-        ];
+        $maxAttempts = 3;
+        $lastError = null;
+        $lastResponse = null;
 
-        if ($deviceId !== null && $deviceId !== '') {
-            $headers[] = 'Device-Id: ' . $deviceId;
-        }
+        for ($attempt = 1; $attempt <= $maxAttempts; $attempt++) {
+            $url = rtrim((string)$this->inchargeConfig('base_url'), '/') . '/' . ltrim($path, '/');
+            $headers = [
+                'Accept: ' . $this->inchargeConfig('accept'),
+                'Content-Type: application/json',
+                'User-Agent: Android',
+                'Ocp-Apim-Subscription-Key: ' . $this->inchargeConfig('subscription_key'),
+                'Apk-SHA1: ' . $this->inchargeConfig('apk_sha1'),
+                'Apk-CRC: ' . $this->inchargeConfig('apk_crc'),
+            ];
 
-        if ($xToken !== null && $xToken !== '') {
-            $headers[] = 'X-Token: ' . $xToken;
-        }
+            if ($deviceId !== null && $deviceId !== '') {
+                $headers[] = 'Device-Id: ' . $deviceId;
+            }
 
-        $ch = curl_init($url);
-        curl_setopt_array($ch, [
-            CURLOPT_CUSTOMREQUEST => strtoupper($method),
-            CURLOPT_RETURNTRANSFER => true,
-            CURLOPT_TIMEOUT => (int)$this->inchargeConfig('timeout'),
-            CURLOPT_HTTPHEADER => $headers,
-        ]);
+            if ($xToken !== null && $xToken !== '') {
+                $headers[] = 'X-Token: ' . $xToken;
+            }
 
-        if ($body !== null) {
-            curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($body, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
-        }
+            $ch = curl_init($url);
+            curl_setopt_array($ch, [
+                CURLOPT_CUSTOMREQUEST => strtoupper($method),
+                CURLOPT_RETURNTRANSFER => true,
+                CURLOPT_TIMEOUT => (int)$this->inchargeConfig('timeout'),
+                CURLOPT_HTTPHEADER => $headers,
+            ]);
 
-        $responseBody = curl_exec($ch);
+            if ($body !== null) {
+                curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($body, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
+            }
 
-        if ($responseBody === false) {
-            $error = curl_error($ch);
+            $responseBody = curl_exec($ch);
+
+            if ($responseBody === false) {
+                $lastError = curl_error($ch);
+                curl_close($ch);
+
+                if ($attempt < $maxAttempts) {
+                    sleep(1);
+                    continue;
+                }
+
+                throw new RuntimeException('InCharge cURL error: ' . $lastError);
+            }
+
+            $statusCode = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
             curl_close($ch);
-            throw new RuntimeException('InCharge cURL error: ' . $error);
+
+            $decoded = json_decode($responseBody, true);
+            $lastResponse = [
+                'status_code' => $statusCode,
+                'raw' => $responseBody,
+                'json' => is_array($decoded) ? $decoded : null,
+                'attempt' => $attempt,
+            ];
+
+            if ($attempt < $maxAttempts && $this->shouldRetryResponse($statusCode, $decoded)) {
+                sleep(1);
+                continue;
+            }
+
+            return $lastResponse;
         }
 
-        $statusCode = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
-        curl_close($ch);
+        if (is_array($lastResponse)) {
+            return $lastResponse;
+        }
 
-        $decoded = json_decode($responseBody, true);
-
-        return [
-            'status_code' => $statusCode,
-            'raw' => $responseBody,
-            'json' => is_array($decoded) ? $decoded : null,
-            'attempt' => 1,
-        ];
+        throw new RuntimeException('InCharge request failed: ' . (string)$lastError);
     }
 
-    private function firstStationFromSearch(array $search)
+    private function shouldRetryResponse(int $statusCode, $decoded): bool
     {
-        $data = $search['data']['data'] ?? null;
+        if ($statusCode === 408 || $statusCode === 429 || $statusCode >= 500) {
+            return true;
+        }
 
-        if (!is_array($data) || !isset($data[0]) || !is_array($data[0])) {
+        return $statusCode >= 200 && $statusCode < 300 && !is_array($decoded);
+    }
+
+    private function firstStationFromSearch(array $search, string $chargepointName)
+    {
+        $candidates = $this->stationCandidates($search['data'] ?? null);
+
+        if ($candidates === []) {
             return null;
         }
 
-        return $data[0];
+        foreach ($candidates as $candidate) {
+            if ($this->stationMatchesChargepointName($candidate, $chargepointName)) {
+                return $candidate;
+            }
+        }
+
+        return $candidates[0];
+    }
+
+    private function stationCandidates($response): array
+    {
+        if (!is_array($response)) {
+            return [];
+        }
+
+        if ($this->looksLikeStation($response)) {
+            return [$response];
+        }
+
+        if (isset($response[0]) && is_array($response[0])) {
+            return array_values(array_filter($response, 'is_array'));
+        }
+
+        foreach (['data', 'items', 'results', 'chargingPoints', 'charging_points', 'stations'] as $key) {
+            if (isset($response[$key]) && is_array($response[$key])) {
+                if (isset($response[$key][0]) && is_array($response[$key][0])) {
+                    return array_values(array_filter($response[$key], 'is_array'));
+                }
+
+                $nested = $this->stationCandidates($response[$key]);
+
+                if ($nested !== []) {
+                    return $nested;
+                }
+            }
+        }
+
+        return [];
+    }
+
+    private function looksLikeStation(array $response): bool
+    {
+        if (isset($response['status']) || isset($response['state']) || isset($response['availability'])) {
+            return isset($response['name'])
+                || isset($response['id'])
+                || isset($response['priceComponents'])
+                || isset($response['connectors'])
+                || isset($response['evses']);
+        }
+
+        return false;
+    }
+
+    private function stationMatchesChargepointName(array $station, string $chargepointName): bool
+    {
+        $chargepointName = FavoriteRepository::normalizeChargepointName($chargepointName);
+
+        foreach (['name', 'id', 'identity', 'stationName', 'chargingPointId', 'chargePointId', 'publicId', 'externalId'] as $key) {
+            if (!isset($station[$key]) || !is_scalar($station[$key])) {
+                continue;
+            }
+
+            if (FavoriteRepository::normalizeChargepointName((string)$station[$key]) === $chargepointName) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private function stationStatus($station): string
+    {
+        if (!is_array($station)) {
+            return 'UNKNOWN';
+        }
+
+        foreach (['status', 'state', 'availability', 'availabilityStatus', 'connectorStatus'] as $key) {
+            if (isset($station[$key]) && is_scalar($station[$key])) {
+                return (string)$station[$key];
+            }
+
+            if (isset($station[$key]) && is_array($station[$key])) {
+                foreach (['status', 'state', 'value', 'name'] as $nestedKey) {
+                    if (isset($station[$key][$nestedKey]) && is_scalar($station[$key][$nestedKey])) {
+                        return (string)$station[$key][$nestedKey];
+                    }
+                }
+            }
+        }
+
+        return 'UNKNOWN';
     }
 
     private function priceLabel($station)

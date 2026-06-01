@@ -27,6 +27,7 @@ body {
 
 .card-body {
     padding: 1.25rem;
+    overflow: hidden;
 }
 
 .stat-card {
@@ -88,6 +89,28 @@ body {
 
 .mono {
     font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+.admin-card form,
+.admin-card .d-grid,
+.admin-card .btn {
+    min-width: 0;
+    max-width: 100%;
+    box-sizing: border-box;
+}
+
+.admin-card .d-grid > form,
+.admin-card .d-grid > form .btn {
+    width: 100%;
+}
+
+.admin-card .btn {
+    white-space: normal;
+}
+
+.admin-card code {
+    white-space: normal;
+    overflow-wrap: anywhere;
 }
 
 @media (max-width: 420px) {

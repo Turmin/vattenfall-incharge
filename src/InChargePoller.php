@@ -49,24 +49,12 @@ final class InChargePoller
                     'message' => Status::label($status['status']),
                 ];
             } catch (Throwable $e) {
-                $this->snapshots->insert([
-                    'favorite_id' => $favoriteId,
-                    'measured_at' => $checkedAt,
-                    'status' => 'UNKNOWN',
-                    'available_connectors' => null,
-                    'occupied_connectors' => null,
-                    'total_connectors' => null,
-                    'raw_json' => json_encode([
-                        'error' => $e->getMessage(),
-                    ], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE),
-                ]);
-
                 $errorCount++;
                 $items[] = [
                     'favorite_id' => $favoriteId,
                     'chargepoint_name' => $chargepointName,
                     'success' => false,
-                    'status' => 'UNKNOWN',
+                    'status' => null,
                     'message' => $e->getMessage(),
                 ];
             }
@@ -81,7 +69,7 @@ final class InChargePoller
             'items' => $items,
             'messages' => [
                 $successCount . ' laadpalen bijgewerkt',
-                $errorCount . ' fouten',
+                $errorCount . ' niet bijgewerkt',
             ],
         ];
     }
