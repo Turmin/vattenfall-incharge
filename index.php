@@ -399,6 +399,7 @@ $chargepoints = $data['chargepoints'] ?? [];
             <p>Laatst geladen: <?= h($data['checked_at'] ?? date(DATE_ATOM)) ?></p>
         </div>
         <div class="actions">
+            <a class="button" href="history.php">Historie</a>
             <a class="button" href="admin/">Admin</a>
         </div>
     </div>
@@ -459,11 +460,11 @@ $chargepoints = $data['chargepoints'] ?? [];
 
                     <div class="chart-shell">
                         <div class="chart-title">
-                            <span>Beschikbaarheid 24 uur</span>
+                            <span>Beschikbaarheid 48 uur</span>
                             <span data-availability-summary="<?= h($favorite['id']) ?>">laden...</span>
                         </div>
                         <div class="chart-canvas">
-                            <canvas data-availability-chart="<?= h($favorite['id']) ?>" aria-label="Beschikbaarheid 24 uur"></canvas>
+                            <canvas data-availability-chart="<?= h($favorite['id']) ?>" data-availability-period="48h" aria-label="Beschikbaarheid 48 uur"></canvas>
                         </div>
                     </div>
                 </article>
@@ -479,230 +480,15 @@ $chargepoints = $data['chargepoints'] ?? [];
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/chart.js@3.9.1/dist/chart.min.js"></script>
+<script src="assets/availability-chart.js"></script>
 <script>
-const colors = {
-    available: '#138a43',
-    occupied: '#c2410c',
-    faulted: '#b42318',
-    unknown: '#d0d5dd'
-};
-
-const labels = {
-    available: 'Vrij',
-    occupied: 'Bezet',
-    faulted: 'Buiten gebruik',
-    unknown: 'Onbekend'
-};
-
-const availabilityCharts = {};
-
-function formatPercent(value) {
-    return Number(value || 0).toFixed(1).replace('.', ',') + '%';
-}
-
-function formatDuration(seconds) {
-    const totalMinutes = Math.max(0, Math.round(Number(seconds || 0) / 60));
-    const hours = Math.floor(totalMinutes / 60);
-    const minutes = totalMinutes % 60;
-
-    if (hours > 0 && minutes > 0) {
-        return hours + ' u ' + minutes + ' m';
-    }
-
-    if (hours > 0) {
-        return hours + ' u';
-    }
-
-    return minutes + ' m';
-}
-
-function segmentHour(value, from, span) {
-    return Math.max(0, Math.min(24, ((value - from) / span) * 24));
-}
-
-function drawAvailability(canvas, data) {
-    if (!window.Chart) {
-        throw new Error('Chart.js niet geladen');
-    }
-
-    const favoriteId = canvas.dataset.availabilityChart;
-    const from = new Date(data.period.from).getTime();
-    const to = new Date(data.period.to).getTime();
-    const span = Math.max(1, to - from);
-    const segments = data.segments || [];
-    const points = [];
-    const pointColors = [];
-
-    for (const segment of segments) {
-        const start = segmentHour(new Date(segment.from).getTime(), from, span);
-        const end = segmentHour(new Date(segment.to).getTime(), from, span);
-        const bucket = segment.status_bucket || 'unknown';
-
-        if (end <= start) {
-            continue;
-        }
-
-        points.push({
-            x: [start, end],
-            y: '24 uur',
-            segment: segment
-        });
-        pointColors.push(colors[bucket] || colors.unknown);
-    }
-
-    if (availabilityCharts[favoriteId]) {
-        availabilityCharts[favoriteId].destroy();
-    }
-
-    availabilityCharts[favoriteId] = new Chart(canvas, {
-        type: 'bar',
-        data: {
-            labels: ['24 uur'],
-            datasets: [{
-                label: 'Beschikbaarheid',
-                data: points,
-                backgroundColor: pointColors,
-                borderColor: '#ffffff',
-                borderWidth: 0,
-                hoverBorderWidth: 1,
-                borderRadius: function (context) {
-                    const count = context.dataset.data.length;
-                    const first = context.dataIndex === 0;
-                    const last = context.dataIndex === count - 1;
-
-                    return {
-                        topLeft: first ? 6 : 0,
-                        bottomLeft: first ? 6 : 0,
-                        topRight: last ? 6 : 0,
-                        bottomRight: last ? 6 : 0
-                    };
-                },
-                borderSkipped: false,
-                barThickness: 26
-            }]
-        },
-        options: {
-            indexAxis: 'y',
-            responsive: true,
-            maintainAspectRatio: false,
-            animation: {
-                duration: 350
-            },
-            parsing: {
-                xAxisKey: 'x',
-                yAxisKey: 'y'
-            },
-            layout: {
-                padding: {
-                    top: 4,
-                    right: 4,
-                    bottom: 0,
-                    left: 0
-                }
-            },
-            plugins: {
-                legend: {
-                    display: false
-                },
-                tooltip: {
-                    displayColors: false,
-                    callbacks: {
-                        title: function () {
-                            return 'Beschikbaarheid';
-                        },
-                        label: function (context) {
-                            const segment = context.raw.segment || {};
-                            const bucket = segment.status_bucket || 'unknown';
-                            const label = segment.status_label || labels[bucket] || 'Onbekend';
-                            return label + ': ' + formatDuration(segment.duration_seconds || 0);
-                        },
-                        afterLabel: function (context) {
-                            const segment = context.raw.segment || {};
-                            const start = segment.from ? new Date(segment.from) : null;
-                            const end = segment.to ? new Date(segment.to) : null;
-
-                            if (!start || !end) {
-                                return '';
-                            }
-
-                            return start.toLocaleTimeString('nl-NL', {hour: '2-digit', minute: '2-digit'})
-                                + ' - '
-                                + end.toLocaleTimeString('nl-NL', {hour: '2-digit', minute: '2-digit'});
-                        }
-                    }
-                }
-            },
-            scales: {
-                x: {
-                    type: 'linear',
-                    min: 0,
-                    max: 24,
-                    grid: {
-                        color: 'rgba(102, 112, 133, 0.14)',
-                        drawBorder: false
-                    },
-                    ticks: {
-                        stepSize: 6,
-                        color: '#667085',
-                        font: {
-                            size: 11
-                        },
-                        callback: function (value) {
-                            if (value === 0) {
-                                return '24u geleden';
-                            }
-
-                            if (value === 24) {
-                                return 'nu';
-                            }
-
-                            return '-' + (24 - value) + 'u';
-                        }
-                    }
-                },
-                y: {
-                    display: false,
-                    grid: {
-                        display: false,
-                        drawBorder: false
-                    }
-                }
-            }
-        }
-    });
-}
-
-async function loadAvailability(canvas) {
-    const favoriteId = canvas.dataset.availabilityChart;
-    const summary = document.querySelector(`[data-availability-summary="${favoriteId}"]`);
-
-    try {
-        const response = await fetch(`api/availability.php?favorite_id=${encodeURIComponent(favoriteId)}&period=24h`, {
-            headers: {Accept: 'application/json'}
-        });
-        const data = await response.json();
-
-        if (!data.success) {
-            const message = data.error && data.error.message ? data.error.message : 'API-fout';
-            throw new Error(message);
-        }
-
-        drawAvailability(canvas, data);
-
-        if (summary) {
-            const available = data.summary && data.summary.available ? data.summary.available.percentage : 0;
-            const occupied = data.summary && data.summary.occupied ? data.summary.occupied.percentage : 0;
-            summary.textContent = 'vrij ' + formatPercent(available) + ' / bezet ' + formatPercent(occupied);
-        }
-    } catch (error) {
-        if (summary) {
-            summary.textContent = error.message;
-        }
-    }
-}
-
 document.querySelectorAll('[data-availability-chart]').forEach(function (canvas) {
-    loadAvailability(canvas);
+    const favoriteId = canvas.dataset.availabilityChart;
+    const summary = document.querySelector('[data-availability-summary="' + favoriteId + '"]');
+
+    window.InChargeAvailabilityChart.load(canvas, {
+        summaryElement: summary
+    }).catch(function () {});
 });
 </script>
 </body>
