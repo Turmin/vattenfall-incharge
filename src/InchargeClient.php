@@ -4,9 +4,12 @@ declare(strict_types=1);
 
 final class InChargeClient
 {
-    public function __construct(
-        private array $config
-    ) {}
+    private $config;
+
+    public function __construct(array $config)
+    {
+        $this->config = $config;
+    }
 
     public function getChargepointStatus(string $chargepointName): array
     {
@@ -156,9 +159,9 @@ final class InChargeClient
     private function request(
         string $method,
         string $path,
-        ?array $body = null,
-        ?string $deviceId = null,
-        ?string $xToken = null
+        array $body = null,
+        $deviceId = null,
+        $xToken = null
     ): array {
         if (!function_exists('curl_init')) {
             throw new RuntimeException('The PHP cURL extension is required.');
@@ -215,7 +218,7 @@ final class InChargeClient
         ];
     }
 
-    private function firstStationFromSearch(array $search): ?array
+    private function firstStationFromSearch(array $search)
     {
         $data = $search['data']['data'] ?? null;
 
@@ -226,7 +229,7 @@ final class InChargeClient
         return $data[0];
     }
 
-    private function priceLabel(?array $station): ?string
+    private function priceLabel($station)
     {
         if (!is_array($station)) {
             return null;
@@ -270,7 +273,7 @@ final class InChargeClient
         return $parts !== [] ? implode(' + ', $parts) : null;
     }
 
-    private function loadSession(): ?array
+    private function loadSession()
     {
         $file = $this->sessionCacheFile();
 
@@ -287,7 +290,7 @@ final class InChargeClient
         return $session;
     }
 
-    private function saveSession(string $deviceId, string $xToken): void
+    private function saveSession(string $deviceId, string $xToken)
     {
         $file = $this->sessionCacheFile();
         $dir = dirname($file);
@@ -307,7 +310,7 @@ final class InChargeClient
         );
     }
 
-    private function clearSession(): void
+    private function clearSession()
     {
         $file = $this->sessionCacheFile();
 
@@ -321,7 +324,7 @@ final class InChargeClient
         return (string)$this->inchargeConfig('session_cache_file');
     }
 
-    private function inchargeConfig(string $key): mixed
+    private function inchargeConfig(string $key)
     {
         if (!array_key_exists($key, $this->config['incharge'] ?? [])) {
             throw new RuntimeException('Missing InCharge config: ' . $key);

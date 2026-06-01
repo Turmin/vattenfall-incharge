@@ -78,7 +78,7 @@ final class Schema
         return $stats;
     }
 
-    public static function seedDefaultCronJob(PDO $pdo): void
+    public static function seedDefaultCronJob(PDO $pdo)
     {
         $pdo->exec("
             INSERT INTO incharge_cron_jobs

@@ -4,12 +4,17 @@ declare(strict_types=1);
 
 final class CronScheduleService
 {
-    public function __construct(
-        private PDO $pdo,
-        private InChargePoller $poller,
-        private SnapshotRepository $snapshots,
-        private array $config
-    ) {
+    private $pdo;
+    private $poller;
+    private $snapshots;
+    private $config;
+
+    public function __construct(PDO $pdo, InChargePoller $poller, SnapshotRepository $snapshots, array $config)
+    {
+        $this->pdo = $pdo;
+        $this->poller = $poller;
+        $this->snapshots = $snapshots;
+        $this->config = $config;
         $this->ensureTable();
         Schema::seedDefaultCronJob($this->pdo);
     }
@@ -108,7 +113,7 @@ final class CronScheduleService
         return $this->executeJob($job);
     }
 
-    public function runDueJobs(?DateTimeImmutable $now = null): array
+    public function runDueJobs(DateTimeImmutable $now = null): array
     {
         $now = $now ?: new DateTimeImmutable('now');
         $results = [];
@@ -128,7 +133,7 @@ final class CronScheduleService
         return $results;
     }
 
-    private function ensureTable(): void
+    private function ensureTable()
     {
         $this->pdo->exec('
             CREATE TABLE IF NOT EXISTS incharge_cron_jobs (
@@ -148,7 +153,7 @@ final class CronScheduleService
         ');
     }
 
-    private function executeJob(array $job, ?DateTimeImmutable $now = null): array
+    private function executeJob(array $job, DateTimeImmutable $now = null): array
     {
         $now = $now ?: new DateTimeImmutable('now');
         $messages = [];

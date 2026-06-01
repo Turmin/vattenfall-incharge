@@ -16,7 +16,7 @@ date_default_timezone_set((string)($config['timezone'] ?? date_default_timezone_
 
 $isCli = PHP_SAPI === 'cli';
 
-function loadInchargeCronToken(array $config): ?string
+function loadInchargeCronToken(array $config)
 {
     $files = [
         (string)($config['cron']['token_file'] ?? ''),

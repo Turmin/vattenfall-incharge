@@ -37,12 +37,12 @@ function formatDurationFromSeconds($seconds): string
     return $minutes . ' m';
 }
 
-function formatDateTime(?string $value): string
+function formatDateTime($value): string
 {
     return $value ? date('d-m-Y H:i', strtotime($value)) : '-';
 }
 
-function extractPriceFromRaw(?string $rawJson): string
+function extractPriceFromRaw($rawJson): string
 {
     if (!$rawJson) {
         return 'Onbekend';

@@ -38,12 +38,26 @@ final class Period
             throw new InvalidArgumentException('Invalid period length.');
         }
 
-        $seconds = match ($unit) {
-            'm' => $amount * 60,
-            'h' => $amount * 3600,
-            'd' => $amount * 86400,
-            'w' => $amount * 604800,
-        };
+        switch ($unit) {
+            case 'm':
+                $seconds = $amount * 60;
+                break;
+
+            case 'h':
+                $seconds = $amount * 3600;
+                break;
+
+            case 'd':
+                $seconds = $amount * 86400;
+                break;
+
+            case 'w':
+                $seconds = $amount * 604800;
+                break;
+
+            default:
+                throw new InvalidArgumentException('Invalid period.');
+        }
 
         return self::build($period, $to->modify('-' . $seconds . ' seconds'), $to);
     }
@@ -66,7 +80,7 @@ final class Period
         ];
     }
 
-    private static function parseDateTime($value): ?DateTimeImmutable
+    private static function parseDateTime($value)
     {
         if (!is_string($value) || trim($value) === '') {
             return null;
@@ -84,7 +98,7 @@ final class Period
 
         try {
             return new DateTimeImmutable($value);
-        } catch (Throwable) {
+        } catch (Throwable $e) {
             return null;
         }
     }

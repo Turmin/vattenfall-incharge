@@ -4,11 +4,16 @@ declare(strict_types=1);
 
 final class InChargePoller
 {
-    public function __construct(
-        private FavoriteRepository $favorites,
-        private SnapshotRepository $snapshots,
-        private InChargeClient $client
-    ) {}
+    private $favorites;
+    private $snapshots;
+    private $client;
+
+    public function __construct(FavoriteRepository $favorites, SnapshotRepository $snapshots, InChargeClient $client)
+    {
+        $this->favorites = $favorites;
+        $this->snapshots = $snapshots;
+        $this->client = $client;
+    }
 
     public function pollActiveFavorites(): array
     {

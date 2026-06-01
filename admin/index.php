@@ -25,7 +25,7 @@ function h($value): string
     return htmlspecialchars((string)$value, ENT_QUOTES, 'UTF-8');
 }
 
-function redirectAdmin(?array $flash = null): void
+function redirectAdmin(array $flash = null)
 {
     if ($flash !== null) {
         $_SESSION['admin_flash'] = $flash;
@@ -35,7 +35,7 @@ function redirectAdmin(?array $flash = null): void
     exit;
 }
 
-function requireValidCsrf(): void
+function requireValidCsrf()
 {
     $token = $_POST['csrf'] ?? '';
 
@@ -44,7 +44,7 @@ function requireValidCsrf(): void
     }
 }
 
-function loadCredentials(string $credentialsFile): ?array
+function loadCredentials(string $credentialsFile)
 {
     if (!is_file($credentialsFile)) {
         return null;
@@ -70,7 +70,7 @@ function cronTokenConfigured(array $config): bool
     return false;
 }
 
-function formatDateTime(?string $value): string
+function formatDateTime($value): string
 {
     return $value ? date('d-m-Y H:i', strtotime($value)) : '-';
 }

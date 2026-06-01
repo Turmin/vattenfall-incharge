@@ -4,9 +4,12 @@ declare(strict_types=1);
 
 final class FavoriteRepository
 {
-    public function __construct(
-        private PDO $pdo
-    ) {}
+    private $pdo;
+
+    public function __construct(PDO $pdo)
+    {
+        $this->pdo = $pdo;
+    }
 
     public function allActive(): array
     {
@@ -31,7 +34,7 @@ final class FavoriteRepository
         return $stmt->fetchAll();
     }
 
-    public function find(int $id): ?array
+    public function find(int $id)
     {
         $stmt = $this->pdo->prepare(
             "SELECT id, chargepoint_name, display_name, is_active, sort_order, created_at, updated_at
@@ -71,7 +74,7 @@ final class FavoriteRepository
         return (int)$this->pdo->lastInsertId();
     }
 
-    public function update(int $id, string $chargepointName, string $displayName, int $sortOrder, bool $isActive): void
+    public function update(int $id, string $chargepointName, string $displayName, int $sortOrder, bool $isActive)
     {
         $stmt = $this->pdo->prepare(
             "UPDATE incharge_favorite_chargepoints
@@ -95,7 +98,7 @@ final class FavoriteRepository
         ]);
     }
 
-    public function setActive(int $id, bool $active): void
+    public function setActive(int $id, bool $active)
     {
         $stmt = $this->pdo->prepare(
             "UPDATE incharge_favorite_chargepoints
@@ -109,7 +112,7 @@ final class FavoriteRepository
         ]);
     }
 
-    public function disable(int $id): void
+    public function disable(int $id)
     {
         $this->setActive($id, false);
     }

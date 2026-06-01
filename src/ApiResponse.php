@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 final class ApiResponse
 {
-    public static function json(array $data, int $statusCode = 200): never
+    public static function json(array $data, int $statusCode = 200)
     {
         http_response_code($statusCode);
         header('Content-Type: application/json; charset=utf-8');
@@ -12,7 +12,7 @@ final class ApiResponse
         exit;
     }
 
-    public static function error(string $message, int $statusCode = 400, array $extra = []): never
+    public static function error(string $message, int $statusCode = 400, array $extra = [])
     {
         self::json([
             'success' => false,
@@ -24,7 +24,7 @@ final class ApiResponse
         ], $statusCode);
     }
 
-    public static function requireToken(array $config): void
+    public static function requireToken(array $config)
     {
         $expected = trim((string)($config['api_token'] ?? ''));
 

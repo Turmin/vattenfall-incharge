@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 final class Status
 {
-    public static function normalize(?string $status): string
+    public static function normalize($status): string
     {
         $status = strtoupper(trim((string)$status));
         $status = str_replace(['-', ' '], '_', $status);
@@ -13,36 +13,70 @@ final class Status
             return 'UNKNOWN';
         }
 
-        return match ($status) {
-            'FREE' => 'AVAILABLE',
-            'BUSY', 'IN_USE', 'INUSE' => 'OCCUPIED',
-            'ERROR', 'FAULT', 'OUTOFORDER', 'OUT_OF_SERVICE', 'OUTOFSERVICE' => 'OUT_OF_ORDER',
-            default => $status,
-        };
+        switch ($status) {
+            case 'FREE':
+                return 'AVAILABLE';
+
+            case 'BUSY':
+            case 'IN_USE':
+            case 'INUSE':
+                return 'OCCUPIED';
+
+            case 'ERROR':
+            case 'FAULT':
+            case 'OUTOFORDER':
+            case 'OUT_OF_SERVICE':
+            case 'OUTOFSERVICE':
+                return 'OUT_OF_ORDER';
+
+            default:
+                return $status;
+        }
     }
 
-    public static function bucket(?string $status): string
+    public static function bucket($status): string
     {
-        return match (self::normalize($status)) {
-            'AVAILABLE' => 'available',
-            'OCCUPIED', 'CHARGING', 'BLOCKED' => 'occupied',
-            'OUT_OF_ORDER', 'FAULTED', 'UNAVAILABLE' => 'faulted',
-            default => 'unknown',
-        };
+        switch (self::normalize($status)) {
+            case 'AVAILABLE':
+                return 'available';
+
+            case 'OCCUPIED':
+            case 'CHARGING':
+            case 'BLOCKED':
+                return 'occupied';
+
+            case 'OUT_OF_ORDER':
+            case 'FAULTED':
+            case 'UNAVAILABLE':
+                return 'faulted';
+
+            default:
+                return 'unknown';
+        }
     }
 
-    public static function label(?string $status): string
+    public static function label($status): string
     {
-        return match (self::normalize($status)) {
-            'AVAILABLE' => 'Vrij',
-            'OCCUPIED' => 'Bezet',
-            'CHARGING' => 'Aan het laden',
-            'OUT_OF_ORDER', 'FAULTED' => 'Buiten gebruik',
-            default => 'Onbekend',
-        };
+        switch (self::normalize($status)) {
+            case 'AVAILABLE':
+                return 'Vrij';
+
+            case 'OCCUPIED':
+                return 'Bezet';
+
+            case 'CHARGING':
+                return 'Aan het laden';
+
+            case 'OUT_OF_ORDER':
+            case 'FAULTED':
+                return 'Buiten gebruik';
+
+            default:
+                return 'Onbekend';
+        }
     }
 
-    public static function connectorCountsFromStation(?array $station, string $stationStatus): array
+    public static function connectorCountsFromStation($station, string $stationStatus): array
     {
         $connectorStatuses = [];
 
@@ -85,12 +119,12 @@ final class Status
         ];
     }
 
-    public static function cssClass(?string $status): string
+    public static function cssClass($status): string
     {
         return 'status-' . self::bucket($status);
     }
 
-    private static function collectConnectorStatuses(array $node, array &$statuses, int $depth = 0): void
+    private static function collectConnectorStatuses(array $node, array &$statuses, int $depth = 0)
     {
         if ($depth > 5) {
             return;

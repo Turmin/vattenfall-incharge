@@ -4,11 +4,14 @@ declare(strict_types=1);
 
 final class SnapshotRepository
 {
-    public function __construct(
-        private PDO $pdo
-    ) {}
+    private $pdo;
 
-    public function insert(array $snapshot): void
+    public function __construct(PDO $pdo)
+    {
+        $this->pdo = $pdo;
+    }
+
+    public function insert(array $snapshot)
     {
         $stmt = $this->pdo->prepare(
             "INSERT INTO incharge_chargepoint_snapshots
@@ -74,7 +77,7 @@ final class SnapshotRepository
         return $rows;
     }
 
-    public function latestForFavorite(int $favoriteId): ?array
+    public function latestForFavorite(int $favoriteId)
     {
         $stmt = $this->pdo->prepare(
             "SELECT *
@@ -210,7 +213,7 @@ final class SnapshotRepository
         return $stmt->rowCount();
     }
 
-    private function latestBefore(int $favoriteId, string $before): ?array
+    private function latestBefore(int $favoriteId, string $before)
     {
         $stmt = $this->pdo->prepare(
             "SELECT id, measured_at, status, status_bucket, available_connectors, occupied_connectors, total_connectors
