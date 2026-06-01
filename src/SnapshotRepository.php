@@ -169,14 +169,14 @@ final class SnapshotRepository
 
             if ($unknownDuration > 0) {
                 $summary['unknown']['seconds'] += $unknownDuration;
-                $segments[] = [
+                $this->appendAvailabilitySegment($segments, [
                     'from' => $from->format(DATE_ATOM),
                     'to' => date(DATE_ATOM, min($firstPointTime, $to->getTimestamp())),
                     'status' => 'UNKNOWN',
                     'status_label' => Status::label('UNKNOWN'),
                     'status_bucket' => 'unknown',
                     'duration_seconds' => $unknownDuration,
-                ];
+                ]);
             }
         }
 
@@ -196,14 +196,14 @@ final class SnapshotRepository
 
             $summary[$bucket]['seconds'] += $duration;
 
-            $segments[] = [
+            $this->appendAvailabilitySegment($segments, [
                 'from' => date(DATE_ATOM, $segmentStart),
                 'to' => date(DATE_ATOM, $segmentEnd),
                 'status' => Status::normalize((string)$point['status']),
                 'status_label' => Status::label((string)$point['status']),
                 'status_bucket' => $bucket,
                 'duration_seconds' => $duration,
-            ];
+            ]);
         }
 
         foreach ($summary as &$item) {
@@ -313,6 +313,24 @@ final class SnapshotRepository
             ]],
             'measurements' => [],
         ];
+    }
+
+    private function appendAvailabilitySegment(array &$segments, array $segment)
+    {
+        $lastIndex = count($segments) - 1;
+
+        if (
+            $lastIndex >= 0
+            && (string)$segments[$lastIndex]['to'] === (string)$segment['from']
+            && (string)$segments[$lastIndex]['status_bucket'] === (string)$segment['status_bucket']
+            && (string)$segments[$lastIndex]['status_label'] === (string)$segment['status_label']
+        ) {
+            $segments[$lastIndex]['to'] = $segment['to'];
+            $segments[$lastIndex]['duration_seconds'] += $segment['duration_seconds'];
+            return;
+        }
+
+        $segments[] = $segment;
     }
 
     private function emptySummary(): array

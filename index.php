@@ -331,17 +331,28 @@ $chargepoints = $data['chargepoints'] ?? [];
             justify-content: space-between;
             gap: 12px;
             align-items: baseline;
-            margin-bottom: 8px;
+            margin-bottom: 10px;
             color: var(--muted);
             font-size: 13px;
         }
 
-        canvas {
-            display: block;
-            width: 100%;
-            height: 72px;
+        .chart-title span:last-child {
+            text-align: right;
+        }
+
+        .chart-canvas {
+            position: relative;
+            height: 118px;
+            border: 1px solid #e4eaf0;
             border-radius: 8px;
-            background: #f8fbfe;
+            background: linear-gradient(180deg, #ffffff 0%, #f8fbfe 100%);
+            padding: 8px 10px 6px;
+        }
+
+        .chart-canvas canvas {
+            display: block;
+            width: 100% !important;
+            height: 100% !important;
         }
 
         .error,
@@ -451,7 +462,9 @@ $chargepoints = $data['chargepoints'] ?? [];
                             <span>Beschikbaarheid 24 uur</span>
                             <span data-availability-summary="<?= h($favorite['id']) ?>">laden...</span>
                         </div>
-                        <canvas data-availability-chart="<?= h($favorite['id']) ?>" aria-label="Availability chart"></canvas>
+                        <div class="chart-canvas">
+                            <canvas data-availability-chart="<?= h($favorite['id']) ?>" aria-label="Beschikbaarheid 24 uur"></canvas>
+                        </div>
                     </div>
                 </article>
             <?php endforeach; ?>
@@ -465,52 +478,198 @@ $chargepoints = $data['chargepoints'] ?? [];
     <?php endif; ?>
 </div>
 
+<script src="https://cdn.jsdelivr.net/npm/chart.js@3.9.1/dist/chart.min.js"></script>
 <script>
 const colors = {
     available: '#138a43',
     occupied: '#c2410c',
     faulted: '#b42318',
-    unknown: '#98a2b3'
+    unknown: '#d0d5dd'
 };
 
+const labels = {
+    available: 'Vrij',
+    occupied: 'Bezet',
+    faulted: 'Buiten gebruik',
+    unknown: 'Onbekend'
+};
+
+const availabilityCharts = {};
+
 function formatPercent(value) {
-    return `${Number(value || 0).toFixed(1).replace('.', ',')}%`;
+    return Number(value || 0).toFixed(1).replace('.', ',') + '%';
+}
+
+function formatDuration(seconds) {
+    const totalMinutes = Math.max(0, Math.round(Number(seconds || 0) / 60));
+    const hours = Math.floor(totalMinutes / 60);
+    const minutes = totalMinutes % 60;
+
+    if (hours > 0 && minutes > 0) {
+        return hours + ' u ' + minutes + ' m';
+    }
+
+    if (hours > 0) {
+        return hours + ' u';
+    }
+
+    return minutes + ' m';
+}
+
+function segmentHour(value, from, span) {
+    return Math.max(0, Math.min(24, ((value - from) / span) * 24));
 }
 
 function drawAvailability(canvas, data) {
-    const rect = canvas.getBoundingClientRect();
-    const dpr = window.devicePixelRatio || 1;
-    const width = Math.max(1, Math.floor(rect.width));
-    const height = Math.max(72, Math.floor(rect.height || 72));
+    if (!window.Chart) {
+        throw new Error('Chart.js niet geladen');
+    }
 
-    canvas.width = width * dpr;
-    canvas.height = height * dpr;
-
-    const ctx = canvas.getContext('2d');
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.clearRect(0, 0, width, height);
-    ctx.fillStyle = '#f8fbfe';
-    ctx.fillRect(0, 0, width, height);
-
+    const favoriteId = canvas.dataset.availabilityChart;
     const from = new Date(data.period.from).getTime();
     const to = new Date(data.period.to).getTime();
     const span = Math.max(1, to - from);
+    const segments = data.segments || [];
+    const points = [];
+    const pointColors = [];
 
-    for (const segment of data.segments || []) {
-        const start = new Date(segment.from).getTime();
-        const end = new Date(segment.to).getTime();
-        const x = Math.max(0, ((start - from) / span) * width);
-        const w = Math.max(1, ((end - start) / span) * width);
-        ctx.fillStyle = colors[segment.status_bucket] || colors.unknown;
-        ctx.fillRect(x, 0, w, height - 18);
+    for (const segment of segments) {
+        const start = segmentHour(new Date(segment.from).getTime(), from, span);
+        const end = segmentHour(new Date(segment.to).getTime(), from, span);
+        const bucket = segment.status_bucket || 'unknown';
+
+        if (end <= start) {
+            continue;
+        }
+
+        points.push({
+            x: [start, end],
+            y: '24 uur',
+            segment: segment
+        });
+        pointColors.push(colors[bucket] || colors.unknown);
     }
 
-    ctx.fillStyle = '#667085';
-    ctx.font = '12px system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
-    ctx.fillText('24h geleden', 0, height - 4);
-    const nowLabel = 'nu';
-    const labelWidth = ctx.measureText(nowLabel).width;
-    ctx.fillText(nowLabel, width - labelWidth, height - 4);
+    if (availabilityCharts[favoriteId]) {
+        availabilityCharts[favoriteId].destroy();
+    }
+
+    availabilityCharts[favoriteId] = new Chart(canvas, {
+        type: 'bar',
+        data: {
+            labels: ['24 uur'],
+            datasets: [{
+                label: 'Beschikbaarheid',
+                data: points,
+                backgroundColor: pointColors,
+                borderColor: '#ffffff',
+                borderWidth: 0,
+                hoverBorderWidth: 1,
+                borderRadius: function (context) {
+                    const count = context.dataset.data.length;
+                    const first = context.dataIndex === 0;
+                    const last = context.dataIndex === count - 1;
+
+                    return {
+                        topLeft: first ? 6 : 0,
+                        bottomLeft: first ? 6 : 0,
+                        topRight: last ? 6 : 0,
+                        bottomRight: last ? 6 : 0
+                    };
+                },
+                borderSkipped: false,
+                barThickness: 26
+            }]
+        },
+        options: {
+            indexAxis: 'y',
+            responsive: true,
+            maintainAspectRatio: false,
+            animation: {
+                duration: 350
+            },
+            parsing: {
+                xAxisKey: 'x',
+                yAxisKey: 'y'
+            },
+            layout: {
+                padding: {
+                    top: 4,
+                    right: 4,
+                    bottom: 0,
+                    left: 0
+                }
+            },
+            plugins: {
+                legend: {
+                    display: false
+                },
+                tooltip: {
+                    displayColors: false,
+                    callbacks: {
+                        title: function () {
+                            return 'Beschikbaarheid';
+                        },
+                        label: function (context) {
+                            const segment = context.raw.segment || {};
+                            const bucket = segment.status_bucket || 'unknown';
+                            const label = segment.status_label || labels[bucket] || 'Onbekend';
+                            return label + ': ' + formatDuration(segment.duration_seconds || 0);
+                        },
+                        afterLabel: function (context) {
+                            const segment = context.raw.segment || {};
+                            const start = segment.from ? new Date(segment.from) : null;
+                            const end = segment.to ? new Date(segment.to) : null;
+
+                            if (!start || !end) {
+                                return '';
+                            }
+
+                            return start.toLocaleTimeString('nl-NL', {hour: '2-digit', minute: '2-digit'})
+                                + ' - '
+                                + end.toLocaleTimeString('nl-NL', {hour: '2-digit', minute: '2-digit'});
+                        }
+                    }
+                }
+            },
+            scales: {
+                x: {
+                    type: 'linear',
+                    min: 0,
+                    max: 24,
+                    grid: {
+                        color: 'rgba(102, 112, 133, 0.14)',
+                        drawBorder: false
+                    },
+                    ticks: {
+                        stepSize: 6,
+                        color: '#667085',
+                        font: {
+                            size: 11
+                        },
+                        callback: function (value) {
+                            if (value === 0) {
+                                return '24u geleden';
+                            }
+
+                            if (value === 24) {
+                                return 'nu';
+                            }
+
+                            return '-' + (24 - value) + 'u';
+                        }
+                    }
+                },
+                y: {
+                    display: false,
+                    grid: {
+                        display: false,
+                        drawBorder: false
+                    }
+                }
+            }
+        }
+    });
 }
 
 async function loadAvailability(canvas) {
@@ -524,15 +683,16 @@ async function loadAvailability(canvas) {
         const data = await response.json();
 
         if (!data.success) {
-            throw new Error(data.error?.message || 'API-fout');
+            const message = data.error && data.error.message ? data.error.message : 'API-fout';
+            throw new Error(message);
         }
 
         drawAvailability(canvas, data);
 
         if (summary) {
-            const available = data.summary?.available?.percentage || 0;
-            const occupied = data.summary?.occupied?.percentage || 0;
-            summary.textContent = `vrij ${formatPercent(available)} / bezet ${formatPercent(occupied)}`;
+            const available = data.summary && data.summary.available ? data.summary.available.percentage : 0;
+            const occupied = data.summary && data.summary.occupied ? data.summary.occupied.percentage : 0;
+            summary.textContent = 'vrij ' + formatPercent(available) + ' / bezet ' + formatPercent(occupied);
         }
     } catch (error) {
         if (summary) {
@@ -541,14 +701,8 @@ async function loadAvailability(canvas) {
     }
 }
 
-for (const canvas of document.querySelectorAll('[data-availability-chart]')) {
+document.querySelectorAll('[data-availability-chart]').forEach(function (canvas) {
     loadAvailability(canvas);
-}
-
-window.addEventListener('resize', () => {
-    for (const canvas of document.querySelectorAll('[data-availability-chart]')) {
-        loadAvailability(canvas);
-    }
 });
 </script>
 </body>
