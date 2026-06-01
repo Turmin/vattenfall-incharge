@@ -2,152 +2,75 @@
 
 declare(strict_types=1);
 
-/*
- * Simple InCharge dashboard.
- * Reads local api.php and renders favorite charging points.
- */
+require __DIR__ . '/src/Database.php';
+require __DIR__ . '/src/Schema.php';
+require __DIR__ . '/src/Status.php';
+require __DIR__ . '/src/FavoriteRepository.php';
+require __DIR__ . '/src/SnapshotRepository.php';
 
-function fetchApiData(): array
-{
-    $apiPath = __DIR__ . '/api.php';
-
-    if (!is_file($apiPath)) {
-        return [
-            'ok' => false,
-            'error' => 'api.php niet gevonden.',
-        ];
-    }
-
-    $scheme = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https' : 'http';
-    $host = $_SERVER['HTTP_HOST'] ?? 'localhost';
-    $directory = rtrim(dirname($_SERVER['SCRIPT_NAME']), '/\\');
-
-    $url = $scheme . '://' . $host . $directory . '/api.php';
-
-    $json = @file_get_contents($url);
-
-    if ($json === false) {
-        return [
-            'ok' => false,
-            'error' => 'Kon api.php niet ophalen via ' . $url,
-        ];
-    }
-
-    $data = json_decode($json, true);
-
-    if (!is_array($data)) {
-        return [
-            'ok' => false,
-            'error' => 'api.php gaf geen geldige JSON terug.',
-            'raw' => $json,
-        ];
-    }
-
-    return $data;
-}
+$config = require __DIR__ . '/config/config.php';
+date_default_timezone_set((string)($config['timezone'] ?? date_default_timezone_get()));
 
 function h($value): string
 {
-    return htmlspecialchars((string) $value, ENT_QUOTES, 'UTF-8');
+    return htmlspecialchars((string)$value, ENT_QUOTES, 'UTF-8');
 }
 
-function formatStatus(string $status): string
+function formatDurationFromSeconds($seconds): string
 {
-    switch (strtoupper($status)) {
-        case 'AVAILABLE':
-            return 'Vrij';
-
-        case 'OCCUPIED':
-            return 'Bezet';
-
-        case 'CHARGING':
-            return 'Aan het laden';
-
-        case 'OUT_OF_ORDER':
-        case 'OUTOFORDER':
-        case 'FAULTED':
-            return 'Buiten gebruik';
-
-        case 'UNKNOWN':
-            return 'Onbekend';
-
-        default:
-            return ucfirst(strtolower($status));
-    }
-}
-
-function statusClass(string $status): string
-{
-    switch (strtoupper($status)) {
-        case 'AVAILABLE':
-            return 'status-available';
-
-        case 'OCCUPIED':
-        case 'CHARGING':
-            return 'status-occupied';
-
-        case 'OUT_OF_ORDER':
-        case 'OUTOFORDER':
-        case 'FAULTED':
-            return 'status-error';
-
-        default:
-            return 'status-unknown';
-    }
-}
-
-function formatDurationFromMinutes($minutes): string
-{
-    if ($minutes === null || !is_numeric($minutes)) {
+    if ($seconds === null || !is_numeric($seconds)) {
         return 'onbekend';
     }
 
-    $totalMinutes = max(0, (int) floor((float) $minutes));
+    $totalMinutes = max(0, (int)floor(((float)$seconds) / 60));
     $hours = intdiv($totalMinutes, 60);
-    $remainingMinutes = $totalMinutes % 60;
+    $minutes = $totalMinutes % 60;
 
-    if ($hours > 0 && $remainingMinutes > 0) {
-        return $hours . ' u, ' . $remainingMinutes . ' m';
+    if ($hours > 0 && $minutes > 0) {
+        return $hours . ' u, ' . $minutes . ' m';
     }
 
     if ($hours > 0) {
         return $hours . ' u';
     }
 
-    return $remainingMinutes . ' m';
+    return $minutes . ' m';
 }
 
-function extractStation(array $result): ?array
+function formatDateTime(?string $value): string
 {
-    $data = $result['incharge']['data'] ?? null;
+    return $value ? date('d-m-Y H:i', strtotime($value)) : '-';
+}
 
-    if (!is_array($data) || !isset($data[0]) || !is_array($data[0])) {
-        return null;
+function extractPriceFromRaw(?string $rawJson): string
+{
+    if (!$rawJson) {
+        return 'Onbekend';
     }
 
-    return $data[0];
-}
+    $raw = json_decode($rawJson, true);
+    $station = is_array($raw) ? ($raw['station'] ?? null) : null;
 
-function extractPrice(array $station): string
-{
+    if (!is_array($station)) {
+        return 'Onbekend';
+    }
+
     $priceComponents = $station['priceComponents'] ?? null;
 
     if (!is_array($priceComponents)) {
         return 'Onbekend';
     }
 
-    $currency = $priceComponents['currency'] ?? 'EUR';
+    $currency = (string)($priceComponents['currency'] ?? 'EUR');
     $components = $priceComponents['components'] ?? [];
-
-    $kwhPrice = null;
-    $fixedPrice = null;
+    $parts = [];
 
     foreach ($components as $component) {
         if (!is_array($component)) {
             continue;
         }
 
-        $type = strtoupper((string) ($component['type'] ?? ''));
+        $type = strtoupper((string)($component['type'] ?? ''));
         $elements = $component['elements'] ?? [];
 
         if (!is_array($elements) || !isset($elements[0]) || !is_array($elements[0])) {
@@ -158,48 +81,67 @@ function extractPrice(array $station): string
             continue;
         }
 
-        $price = (float) $elements[0]['price'];
+        $price = number_format((float)$elements[0]['price'], 4, ',', '.');
 
         if ($type === 'KWH') {
-            $kwhPrice = $price;
+            $parts[] = $price . ' ' . $currency . '/kWh';
+        } elseif ($type === 'FIXED' && (float)$elements[0]['price'] > 0) {
+            $parts[] = $price . ' ' . $currency . ' vast';
         }
-
-        if ($type === 'FIXED') {
-            $fixedPrice = $price;
-        }
-    }
-
-    $parts = [];
-
-    if ($kwhPrice !== null) {
-        $parts[] = number_format($kwhPrice, 4, ',', '.') . ' ' . $currency . '/kWh';
-    }
-
-    if ($fixedPrice !== null && $fixedPrice > 0) {
-        $parts[] = number_format($fixedPrice, 4, ',', '.') . ' ' . $currency . ' vast';
     }
 
     return $parts !== [] ? implode(' + ', $parts) : 'Onbekend';
 }
 
-function getStatusFromResult(array $result, ?array $station): string
+function loadDashboardData(array $config): array
 {
-    if (is_array($station) && isset($station['status']) && is_string($station['status'])) {
-        return strtoupper($station['status']);
+    try {
+        $pdo = Database::connect($config);
+
+        if (!Schema::tablesExist($pdo)) {
+            return [
+                'success' => false,
+                'error' => 'Database tabellen ontbreken. Draai setup.php om tabellen aan te maken en favo.json te importeren.',
+                'setup_required' => true,
+            ];
+        }
+
+        $favoritesRepo = new FavoriteRepository($pdo);
+        $snapshotRepo = new SnapshotRepository($pdo);
+        $favorites = $favoritesRepo->allActive();
+        $snapshots = $snapshotRepo->latestForFavorites();
+        $snapshotByFavoriteId = [];
+
+        foreach ($snapshots as $snapshot) {
+            $snapshotByFavoriteId[(int)$snapshot['favorite_id']] = $snapshot;
+        }
+
+        $chargepoints = [];
+
+        foreach ($favorites as $favorite) {
+            $favoriteId = (int)$favorite['id'];
+            $chargepoints[] = [
+                'favorite' => $favorite,
+                'latest' => $snapshotByFavoriteId[$favoriteId] ?? null,
+            ];
+        }
+
+        return [
+            'success' => true,
+            'checked_at' => date(DATE_ATOM),
+            'chargepoints' => $chargepoints,
+            'stats' => Schema::stats($pdo),
+        ];
+    } catch (Throwable $e) {
+        return [
+            'success' => false,
+            'error' => $e->getMessage(),
+        ];
     }
-
-    $trackingStatus = $result['local_tracking']['status'] ?? null;
-
-    if (is_string($trackingStatus) && $trackingStatus !== '') {
-        return strtoupper($trackingStatus);
-    }
-
-    return 'UNKNOWN';
 }
 
-$data = fetchApiData();
-$results = $data['results'] ?? [];
-
+$data = loadDashboardData($config);
+$chargepoints = $data['chargepoints'] ?? [];
 ?>
 <!doctype html>
 <html lang="nl">
@@ -207,20 +149,19 @@ $results = $data['results'] ?? [];
     <meta charset="utf-8">
     <title>InCharge laadpalen</title>
     <meta name="viewport" content="width=device-width, initial-scale=1">
-
     <meta http-equiv="refresh" content="60">
-
     <style>
         :root {
-            --bg: #f4f6f8;
+            --bg: #eef3f8;
             --card: #ffffff;
-            --text: #17212b;
+            --text: #172033;
             --muted: #667085;
             --border: #d8dee4;
             --available: #138a43;
             --occupied: #c2410c;
-            --error: #b42318;
+            --faulted: #b42318;
             --unknown: #667085;
+            --primary: #0a66c2;
         }
 
         * {
@@ -236,17 +177,22 @@ $results = $data['results'] ?? [];
         }
 
         .page {
-            max-width: 1100px;
+            max-width: 1180px;
             margin: 0 auto;
         }
 
         .header {
-            margin-bottom: 24px;
+            display: flex;
+            justify-content: space-between;
+            gap: 16px;
+            align-items: flex-start;
+            margin-bottom: 20px;
         }
 
-        .header h1 {
+        h1 {
             margin: 0 0 6px;
-            font-size: 28px;
+            font-size: 30px;
+            letter-spacing: 0;
         }
 
         .header p {
@@ -254,16 +200,66 @@ $results = $data['results'] ?? [];
             color: var(--muted);
         }
 
+        .actions {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+        }
+
+        .button {
+            display: inline-flex;
+            align-items: center;
+            min-height: 38px;
+            padding: 0 12px;
+            border-radius: 8px;
+            border: 1px solid var(--border);
+            background: #fff;
+            color: var(--text);
+            text-decoration: none;
+            font-weight: 700;
+        }
+
+        .button.primary {
+            background: var(--primary);
+            border-color: var(--primary);
+            color: #fff;
+        }
+
+        .summary {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 12px;
+            margin-bottom: 16px;
+        }
+
+        .summary-item {
+            background: #fff;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 12px;
+        }
+
+        .summary-item div:first-child {
+            color: var(--muted);
+            font-size: 13px;
+        }
+
+        .summary-item strong {
+            display: block;
+            margin-top: 4px;
+            font-size: 20px;
+        }
+
         .grid {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(270px, 1fr));
+            grid-template-columns: repeat(auto-fit, minmax(310px, 1fr));
             gap: 16px;
         }
 
         .card {
             background: var(--card);
             border: 1px solid var(--border);
-            border-radius: 16px;
+            border-radius: 8px;
             padding: 18px;
             box-shadow: 0 8px 24px rgba(15, 23, 42, 0.06);
         }
@@ -280,12 +276,14 @@ $results = $data['results'] ?? [];
             font-size: 20px;
             font-weight: 700;
             margin: 0;
+            letter-spacing: 0;
         }
 
         .subtitle {
             margin: 4px 0 0;
             color: var(--muted);
             font-size: 14px;
+            font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
         }
 
         .status {
@@ -307,8 +305,8 @@ $results = $data['results'] ?? [];
             background: var(--occupied);
         }
 
-        .status-error {
-            background: var(--error);
+        .status-faulted {
+            background: var(--faulted);
         }
 
         .status-unknown {
@@ -342,116 +340,240 @@ $results = $data['results'] ?? [];
             color: var(--muted);
         }
 
-        .error {
-            background: #fff1f0;
-            border: 1px solid #ffccc7;
-            color: #a8071a;
-            padding: 16px;
-            border-radius: 12px;
-            white-space: pre-wrap;
+        .chart-shell {
+            margin-top: 16px;
+            border-top: 1px solid var(--border);
+            padding-top: 14px;
         }
 
+        .chart-title {
+            display: flex;
+            justify-content: space-between;
+            gap: 12px;
+            align-items: baseline;
+            margin-bottom: 8px;
+            color: var(--muted);
+            font-size: 13px;
+        }
+
+        canvas {
+            display: block;
+            width: 100%;
+            height: 72px;
+            border-radius: 8px;
+            background: #f8fbfe;
+        }
+
+        .error,
         .empty {
             background: #fff;
             border: 1px solid var(--border);
             padding: 16px;
-            border-radius: 12px;
-            color: var(--muted);
+            border-radius: 8px;
+        }
+
+        .error {
+            border-color: #fecdca;
+            color: #a8071a;
+            white-space: pre-wrap;
+        }
+
+        @media (max-width: 640px) {
+            body {
+                padding: 16px;
+            }
+
+            .header {
+                display: block;
+            }
+
+            .actions {
+                margin-top: 12px;
+            }
         }
     </style>
 </head>
 <body>
 <div class="page">
     <div class="header">
-        <h1>InCharge laadpalen</h1>
-        <p>
-            Laatst gecontroleerd:
-            <?= h($data['checked_at'] ?? date(DATE_ATOM)) ?>
-        </p>
+        <div>
+            <h1>InCharge laadpalen</h1>
+            <p>Laatst geladen: <?= h($data['checked_at'] ?? date(DATE_ATOM)) ?></p>
+        </div>
+        <div class="actions">
+            <a class="button" href="setup.php">Setup</a>
+            <a class="button" href="admin/">Admin</a>
+            <a class="button primary" href="api/status.php">API</a>
+        </div>
     </div>
 
-    <?php if (($data['ok'] ?? false) !== true): ?>
+    <?php if (($data['success'] ?? false) !== true): ?>
         <div class="error">
-            <?= h($data['error'] ?? 'Onbekende API-fout.') ?>
+            <?= h($data['error'] ?? 'Onbekende fout.') ?>
         </div>
-    <?php elseif (!is_array($results) || count($results) === 0): ?>
+    <?php elseif (!is_array($chargepoints) || count($chargepoints) === 0): ?>
         <div class="empty">
-            Geen laadpalen gevonden.
+            Geen actieve laadpalen gevonden. Voeg favorieten toe via admin of importeer favo.json via setup.
         </div>
     <?php else: ?>
+        <div class="summary">
+            <div class="summary-item">
+                <div>Actieve laadpalen</div>
+                <strong><?= h($data['stats']['active_favorites'] ?? count($chargepoints)) ?></strong>
+            </div>
+            <div class="summary-item">
+                <div>Snapshots</div>
+                <strong><?= h($data['stats']['snapshots'] ?? 0) ?></strong>
+            </div>
+            <div class="summary-item">
+                <div>Laatste meting</div>
+                <strong><?= h(formatDateTime($data['stats']['latest_snapshot_at'] ?? null)) ?></strong>
+            </div>
+        </div>
+
         <div class="grid">
-            <?php foreach ($results as $result): ?>
+            <?php foreach ($chargepoints as $item): ?>
                 <?php
-                if (!is_array($result)) {
-                    continue;
-                }
-
-                $favorite = $result['favorite'] ?? [];
-                $station = extractStation($result);
-
-                $name = (string) ($favorite['name'] ?? 'Onbekend');
-                $label = (string) ($favorite['label'] ?? $name);
-
-                $status = getStatusFromResult($result, $station);
-                $price = $station ? extractPrice($station) : 'Onbekend';
-
-                $minutes = $result['local_tracking']['minutes_in_current_status'] ?? null;
-                $duration = formatDurationFromMinutes($minutes);
-
-                $statusCode = $result['incharge']['status_code'] ?? null;
-                $attempt = $result['incharge']['attempt'] ?? null;
+                $favorite = $item['favorite'];
+                $latest = $item['latest'];
+                $status = is_array($latest) ? (string)$latest['status'] : 'UNKNOWN';
+                $statusLabel = Status::label($status);
+                $statusClass = Status::cssClass($status);
+                $duration = is_array($latest) ? formatDurationFromSeconds($latest['seconds_in_current_status'] ?? null) : 'onbekend';
+                $price = is_array($latest) ? extractPriceFromRaw($latest['raw_json'] ?? null) : 'Onbekend';
                 ?>
-                <article class="card">
+                <article class="card" data-card="<?= h($favorite['id']) ?>">
                     <div class="card-header">
                         <div>
-                            <h2 class="title"><?= h($label) ?></h2>
-                            <p class="subtitle"><?= h($name) ?></p>
+                            <h2 class="title"><?= h($favorite['display_name']) ?></h2>
+                            <p class="subtitle"><?= h($favorite['chargepoint_name']) ?></p>
                         </div>
-
-                        <span class="status <?= h(statusClass($status)) ?>">
-                            <?= h(formatStatus($status)) ?>
-                        </span>
+                        <span class="status <?= h($statusClass) ?>"><?= h($statusLabel) ?></span>
                     </div>
 
                     <div class="meta">
                         <div class="row">
-                            <span class="label">Naam</span>
-                            <span class="value"><?= h($name) ?></span>
+                            <span class="label">Status sinds</span>
+                            <span class="value"><?= h($duration) ?></span>
                         </div>
-
                         <div class="row">
-                            <span class="label">Label</span>
-                            <span class="value"><?= h($label) ?></span>
+                            <span class="label">Laatste meting</span>
+                            <span class="value"><?= h(is_array($latest) ? formatDateTime((string)$latest['measured_at']) : '-') ?></span>
                         </div>
-
                         <div class="row">
-                            <span class="label">Status</span>
-                            <span class="value"><?= h(formatStatus($status)) ?></span>
+                            <span class="label">Connectors</span>
+                            <span class="value">
+                                <?php if (is_array($latest) && $latest['total_connectors'] !== null): ?>
+                                    <?= h((int)$latest['available_connectors']) ?> vrij / <?= h((int)$latest['total_connectors']) ?> totaal
+                                <?php else: ?>
+                                    onbekend
+                                <?php endif; ?>
+                            </span>
                         </div>
-
                         <div class="row">
                             <span class="label">Prijs</span>
                             <span class="value"><?= h($price) ?></span>
                         </div>
+                    </div>
 
-                        <div class="row">
-                            <span class="label">
-                                <?= strtoupper($status) === 'OCCUPIED' ? 'Bezet sinds' : 'Status sinds' ?>
-                            </span>
-                            <span class="value"><?= h($duration) ?></span>
+                    <div class="chart-shell">
+                        <div class="chart-title">
+                            <span>Beschikbaarheid 24 uur</span>
+                            <span data-availability-summary="<?= h($favorite['id']) ?>">laden...</span>
                         </div>
-
-                        <div class="row">
-                            <span class="label">API</span>
-                            <span class="value small">
-                                HTTP <?= h($statusCode ?? '-') ?><?= $attempt ? ', poging ' . h($attempt) : '' ?>
-                            </span>
-                        </div>
+                        <canvas data-availability-chart="<?= h($favorite['id']) ?>" aria-label="Availability chart"></canvas>
                     </div>
                 </article>
             <?php endforeach; ?>
         </div>
     <?php endif; ?>
 </div>
+
+<script>
+const colors = {
+    available: '#138a43',
+    occupied: '#c2410c',
+    faulted: '#b42318',
+    unknown: '#98a2b3'
+};
+
+function formatPercent(value) {
+    return `${Number(value || 0).toFixed(1).replace('.', ',')}%`;
+}
+
+function drawAvailability(canvas, data) {
+    const rect = canvas.getBoundingClientRect();
+    const dpr = window.devicePixelRatio || 1;
+    const width = Math.max(1, Math.floor(rect.width));
+    const height = Math.max(72, Math.floor(rect.height || 72));
+
+    canvas.width = width * dpr;
+    canvas.height = height * dpr;
+
+    const ctx = canvas.getContext('2d');
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, width, height);
+    ctx.fillStyle = '#f8fbfe';
+    ctx.fillRect(0, 0, width, height);
+
+    const from = new Date(data.period.from).getTime();
+    const to = new Date(data.period.to).getTime();
+    const span = Math.max(1, to - from);
+
+    for (const segment of data.segments || []) {
+        const start = new Date(segment.from).getTime();
+        const end = new Date(segment.to).getTime();
+        const x = Math.max(0, ((start - from) / span) * width);
+        const w = Math.max(1, ((end - start) / span) * width);
+        ctx.fillStyle = colors[segment.status_bucket] || colors.unknown;
+        ctx.fillRect(x, 0, w, height - 18);
+    }
+
+    ctx.fillStyle = '#667085';
+    ctx.font = '12px system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+    ctx.fillText('24h geleden', 0, height - 4);
+    const nowLabel = 'nu';
+    const labelWidth = ctx.measureText(nowLabel).width;
+    ctx.fillText(nowLabel, width - labelWidth, height - 4);
+}
+
+async function loadAvailability(canvas) {
+    const favoriteId = canvas.dataset.availabilityChart;
+    const summary = document.querySelector(`[data-availability-summary="${favoriteId}"]`);
+
+    try {
+        const response = await fetch(`api/availability.php?favorite_id=${encodeURIComponent(favoriteId)}&period=24h`, {
+            headers: {Accept: 'application/json'}
+        });
+        const data = await response.json();
+
+        if (!data.success) {
+            throw new Error(data.error?.message || 'API-fout');
+        }
+
+        drawAvailability(canvas, data);
+
+        if (summary) {
+            const available = data.summary?.available?.percentage || 0;
+            const occupied = data.summary?.occupied?.percentage || 0;
+            summary.textContent = `vrij ${formatPercent(available)} / bezet ${formatPercent(occupied)}`;
+        }
+    } catch (error) {
+        if (summary) {
+            summary.textContent = error.message;
+        }
+    }
+}
+
+for (const canvas of document.querySelectorAll('[data-availability-chart]')) {
+    loadAvailability(canvas);
+}
+
+window.addEventListener('resize', () => {
+    for (const canvas of document.querySelectorAll('[data-availability-chart]')) {
+        loadAvailability(canvas);
+    }
+});
+</script>
 </body>
 </html>

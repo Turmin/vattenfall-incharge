@@ -1,0 +1,341 @@
+<?php
+
+declare(strict_types=1);
+
+final class InChargeClient
+{
+    public function __construct(
+        private array $config
+    ) {}
+
+    public function getChargepointStatus(string $chargepointName): array
+    {
+        $chargepointName = FavoriteRepository::normalizeChargepointName($chargepointName);
+        $session = $this->getOrCreateSession();
+        $search = $this->searchStationWithSessionRefresh($chargepointName, $session);
+        $station = $this->firstStationFromSearch($search);
+        $status = Status::normalize(is_array($station) ? (string)($station['status'] ?? 'UNKNOWN') : 'UNKNOWN');
+        $counts = Status::connectorCountsFromStation($station, $status);
+
+        return [
+            'status' => $status,
+            'status_bucket' => Status::bucket($status),
+            'status_label' => Status::label($status),
+            'available_connectors' => $counts['available_connectors'],
+            'occupied_connectors' => $counts['occupied_connectors'],
+            'total_connectors' => $counts['total_connectors'],
+            'price_label' => $this->priceLabel($station),
+            'station' => $station,
+            'search' => [
+                'station_name' => $chargepointName,
+                'status_code' => $search['status_code'],
+                'attempt' => $search['attempt'],
+                'session_refreshed_after_401' => (bool)($search['session_refreshed_after_401'] ?? false),
+            ],
+            'raw' => [
+                'station_name' => $chargepointName,
+                'status_code' => $search['status_code'],
+                'attempt' => $search['attempt'],
+                'station' => $station,
+                'response' => $search['data'],
+            ],
+        ];
+    }
+
+    private function searchStationWithSessionRefresh(string $stationName, array &$session): array
+    {
+        $result = $this->searchStation($stationName, $session['device_id'], $session['x_token']);
+
+        if ((int)($result['status_code'] ?? 0) !== 401) {
+            return $result;
+        }
+
+        $this->clearSession();
+        $session = $this->bootstrapDevice();
+        $this->saveSession($session['device_id'], $session['x_token']);
+
+        $result = $this->searchStation($stationName, $session['device_id'], $session['x_token']);
+        $result['session_refreshed_after_401'] = true;
+
+        if ((int)($result['status_code'] ?? 0) === 401) {
+            throw new RuntimeException('InCharge search failed after session refresh: HTTP 401');
+        }
+
+        return $result;
+    }
+
+    private function searchStation(string $stationName, string $deviceId, string $xToken): array
+    {
+        $response = $this->request(
+            'POST',
+            (string)$this->inchargeConfig('search_path'),
+            $this->buildSearchBody($stationName),
+            $deviceId,
+            $xToken
+        );
+
+        if ((int)$response['status_code'] !== 401 && ((int)$response['status_code'] < 200 || (int)$response['status_code'] >= 300)) {
+            throw new RuntimeException('InCharge search failed: HTTP ' . $response['status_code']);
+        }
+
+        return [
+            'station_name' => $stationName,
+            'status_code' => $response['status_code'],
+            'attempt' => $response['attempt'] ?? 1,
+            'data' => $response['json'],
+            'raw' => $response['json'] === null ? $response['raw'] : null,
+        ];
+    }
+
+    private function buildSearchBody(string $stationName): array
+    {
+        return [
+            'coordinates' => $this->inchargeConfig('search_coordinates'),
+            'pagination' => [
+                'pageNumber' => 0,
+                'pageSize' => (int)$this->inchargeConfig('page_size'),
+            ],
+            'search' => $stationName,
+        ];
+    }
+
+    private function getOrCreateSession(): array
+    {
+        $session = $this->loadSession();
+
+        if (is_array($session)) {
+            return $session;
+        }
+
+        $session = $this->bootstrapDevice();
+        $this->saveSession($session['device_id'], $session['x_token']);
+
+        return $session;
+    }
+
+    private function bootstrapDevice(): array
+    {
+        $deviceId = $this->uuidV4();
+
+        $response = $this->request(
+            'PUT',
+            (string)$this->inchargeConfig('device_path'),
+            [
+                'brand' => 'nuon',
+                'deviceId' => $deviceId,
+                'language' => 'EN',
+                'locale' => 'en_US',
+                'osVersion' => '37',
+                'pushToken' => 'php-' . $this->uuidV4(),
+                'userAgent' => 'android',
+                'versionCode' => 40505180,
+                'versionName' => '4.8.7',
+            ],
+            $deviceId,
+            null
+        );
+
+        if ((int)$response['status_code'] < 200 || (int)$response['status_code'] >= 300) {
+            throw new RuntimeException('Device bootstrap failed: HTTP ' . $response['status_code']);
+        }
+
+        $json = $response['json'] ?? [];
+        $xToken = $json['xToken'] ?? null;
+
+        if (!is_string($xToken) || $xToken === '') {
+            throw new RuntimeException('Device bootstrap succeeded, but no xToken was found.');
+        }
+
+        return [
+            'device_id' => $deviceId,
+            'x_token' => $xToken,
+            'created_at' => date(DATE_ATOM),
+        ];
+    }
+
+    private function request(
+        string $method,
+        string $path,
+        ?array $body = null,
+        ?string $deviceId = null,
+        ?string $xToken = null
+    ): array {
+        if (!function_exists('curl_init')) {
+            throw new RuntimeException('The PHP cURL extension is required.');
+        }
+
+        $url = rtrim((string)$this->inchargeConfig('base_url'), '/') . '/' . ltrim($path, '/');
+        $headers = [
+            'Accept: ' . $this->inchargeConfig('accept'),
+            'Content-Type: application/json',
+            'User-Agent: Android',
+            'Ocp-Apim-Subscription-Key: ' . $this->inchargeConfig('subscription_key'),
+            'Apk-SHA1: ' . $this->inchargeConfig('apk_sha1'),
+            'Apk-CRC: ' . $this->inchargeConfig('apk_crc'),
+        ];
+
+        if ($deviceId !== null && $deviceId !== '') {
+            $headers[] = 'Device-Id: ' . $deviceId;
+        }
+
+        if ($xToken !== null && $xToken !== '') {
+            $headers[] = 'X-Token: ' . $xToken;
+        }
+
+        $ch = curl_init($url);
+        curl_setopt_array($ch, [
+            CURLOPT_CUSTOMREQUEST => strtoupper($method),
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_TIMEOUT => (int)$this->inchargeConfig('timeout'),
+            CURLOPT_HTTPHEADER => $headers,
+        ]);
+
+        if ($body !== null) {
+            curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($body, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
+        }
+
+        $responseBody = curl_exec($ch);
+
+        if ($responseBody === false) {
+            $error = curl_error($ch);
+            curl_close($ch);
+            throw new RuntimeException('InCharge cURL error: ' . $error);
+        }
+
+        $statusCode = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        curl_close($ch);
+
+        $decoded = json_decode($responseBody, true);
+
+        return [
+            'status_code' => $statusCode,
+            'raw' => $responseBody,
+            'json' => is_array($decoded) ? $decoded : null,
+            'attempt' => 1,
+        ];
+    }
+
+    private function firstStationFromSearch(array $search): ?array
+    {
+        $data = $search['data']['data'] ?? null;
+
+        if (!is_array($data) || !isset($data[0]) || !is_array($data[0])) {
+            return null;
+        }
+
+        return $data[0];
+    }
+
+    private function priceLabel(?array $station): ?string
+    {
+        if (!is_array($station)) {
+            return null;
+        }
+
+        $priceComponents = $station['priceComponents'] ?? null;
+
+        if (!is_array($priceComponents)) {
+            return null;
+        }
+
+        $currency = (string)($priceComponents['currency'] ?? 'EUR');
+        $components = $priceComponents['components'] ?? [];
+        $parts = [];
+
+        foreach ($components as $component) {
+            if (!is_array($component)) {
+                continue;
+            }
+
+            $type = strtoupper((string)($component['type'] ?? ''));
+            $elements = $component['elements'] ?? [];
+
+            if (!is_array($elements) || !isset($elements[0]) || !is_array($elements[0])) {
+                continue;
+            }
+
+            if (!isset($elements[0]['price']) || !is_numeric($elements[0]['price'])) {
+                continue;
+            }
+
+            $price = number_format((float)$elements[0]['price'], 4, ',', '.');
+
+            if ($type === 'KWH') {
+                $parts[] = $price . ' ' . $currency . '/kWh';
+            } elseif ($type === 'FIXED') {
+                $parts[] = $price . ' ' . $currency . ' vast';
+            }
+        }
+
+        return $parts !== [] ? implode(' + ', $parts) : null;
+    }
+
+    private function loadSession(): ?array
+    {
+        $file = $this->sessionCacheFile();
+
+        if (!is_file($file)) {
+            return null;
+        }
+
+        $session = json_decode((string)file_get_contents($file), true);
+
+        if (!is_array($session) || empty($session['device_id']) || empty($session['x_token'])) {
+            return null;
+        }
+
+        return $session;
+    }
+
+    private function saveSession(string $deviceId, string $xToken): void
+    {
+        $file = $this->sessionCacheFile();
+        $dir = dirname($file);
+
+        if (!is_dir($dir) && !mkdir($dir, 0775, true) && !is_dir($dir)) {
+            throw new RuntimeException('Could not create cache directory: ' . $dir);
+        }
+
+        file_put_contents(
+            $file,
+            json_encode([
+                'device_id' => $deviceId,
+                'x_token' => $xToken,
+                'created_at' => date(DATE_ATOM),
+            ], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE),
+            LOCK_EX
+        );
+    }
+
+    private function clearSession(): void
+    {
+        $file = $this->sessionCacheFile();
+
+        if (is_file($file)) {
+            unlink($file);
+        }
+    }
+
+    private function sessionCacheFile(): string
+    {
+        return (string)$this->inchargeConfig('session_cache_file');
+    }
+
+    private function inchargeConfig(string $key): mixed
+    {
+        if (!array_key_exists($key, $this->config['incharge'] ?? [])) {
+            throw new RuntimeException('Missing InCharge config: ' . $key);
+        }
+
+        return $this->config['incharge'][$key];
+    }
+
+    private function uuidV4(): string
+    {
+        $data = random_bytes(16);
+        $data[6] = chr((ord($data[6]) & 0x0f) | 0x40);
+        $data[8] = chr((ord($data[8]) & 0x3f) | 0x80);
+
+        return vsprintf('%s%s-%s-%s-%s-%s%s%s', str_split(bin2hex($data), 4));
+    }
+}

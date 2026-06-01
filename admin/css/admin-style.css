@@ -1,0 +1,97 @@
+body {
+    background: #eef3f8;
+    min-height: 100vh;
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    color: #172033;
+}
+
+.admin-container {
+    max-width: 1180px;
+    padding: 2rem 1rem;
+}
+
+.admin-card {
+    background: #fff;
+    border: 1px solid rgba(20, 52, 85, .12);
+    border-radius: 8px;
+    box-shadow: 0 8px 26px rgba(17, 40, 68, .10);
+    margin-bottom: 1.25rem;
+    overflow: hidden;
+}
+
+.admin-header {
+    background: linear-gradient(135deg, #0a66c2 0%, #0f9488 100%);
+    color: #fff;
+    padding: 1.25rem;
+}
+
+.card-body {
+    padding: 1.25rem;
+}
+
+.stat-card {
+    border-left: 4px solid #0a66c2;
+    background: #f8fbfe;
+    border-radius: 8px;
+    padding: 1rem;
+    min-height: 118px;
+}
+
+.stat-number {
+    font-size: 1.55rem;
+    font-weight: 700;
+    color: #0a66c2;
+    overflow-wrap: anywhere;
+}
+
+.status-row,
+.cron-row,
+.favorite-row {
+    border: 1px solid #dde7f1;
+    border-radius: 8px;
+    padding: 1rem;
+    background: #f8fbfe;
+}
+
+.cron-row + .cron-row,
+.favorite-row + .favorite-row {
+    margin-top: .75rem;
+}
+
+.admin-toolbar {
+    align-items: flex-start;
+    align-self: flex-start;
+}
+
+.admin-toolbar .btn,
+.admin-user-badge {
+    min-height: 31px;
+    display: inline-flex;
+    align-items: center;
+}
+
+.admin-user-badge {
+    padding: .25rem .5rem;
+    font-size: .875rem;
+    font-weight: 600;
+}
+
+.admin-toolbar form {
+    margin: 0;
+    display: flex;
+}
+
+.login-shell {
+    max-width: 520px;
+    margin: 8vh auto;
+}
+
+.mono {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+@media (max-width: 420px) {
+    .btn-group {
+        display: grid;
+    }
+}
