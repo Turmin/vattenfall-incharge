@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 $rootDir = dirname(__DIR__);
 $webRoot = dirname($rootDir);
-$credentialsFile = $webRoot . '/knmi.database.credentials.php';
+$credentialsFile = $webRoot . '/database.credentials.php';
 $dbCredentials = [];
 
 if (is_file($credentialsFile)) {

@@ -76,7 +76,12 @@ final class SnapshotRepository
                 }
             }
 
-            $state = $this->statusSince((int)$row['favorite_id'], (int)$row['id'], (string)$row['status_bucket']);
+            $state = $this->statusSince(
+                (int)$row['favorite_id'],
+                (int)$row['id'],
+                (string)$row['status_bucket'],
+                (string)$row['measured_at']
+            );
             $row['status_since'] = $state['status_since'];
             $row['seconds_in_current_status'] = max(0, $now - strtotime((string)$state['status_since']));
         }
@@ -109,7 +114,12 @@ final class SnapshotRepository
             }
         }
 
-        $state = $this->statusSince((int)$row['favorite_id'], (int)$row['id'], (string)$row['status_bucket']);
+        $state = $this->statusSince(
+            (int)$row['favorite_id'],
+            (int)$row['id'],
+            (string)$row['status_bucket'],
+            (string)$row['measured_at']
+        );
         $row['status_since'] = $state['status_since'];
         $row['seconds_in_current_status'] = max(0, time() - strtotime((string)$state['status_since']));
 
@@ -264,33 +274,69 @@ final class SnapshotRepository
         return is_array($row) ? $row : null;
     }
 
-    private function statusSince(int $favoriteId, int $latestId, string $currentBucket): array
+    private function statusSince(int $favoriteId, int $latestId, string $currentBucket, string $latestMeasuredAt): array
     {
         $stmt = $this->pdo->prepare(
             "SELECT id, measured_at, status_bucket
              FROM incharge_chargepoint_snapshots
              WHERE favorite_id = :favorite_id
                AND id <= :latest_id
+               AND status_bucket <> :status_bucket
+               AND (
+                   measured_at < :latest_measured_at
+                   OR (measured_at = :latest_measured_at_same AND id < :latest_id_same)
+               )
              ORDER BY measured_at DESC, id DESC
-             LIMIT 1000"
+             LIMIT 1"
         );
         $stmt->execute([
             ':favorite_id' => $favoriteId,
             ':latest_id' => $latestId,
+            ':status_bucket' => $currentBucket,
+            ':latest_measured_at' => $latestMeasuredAt,
+            ':latest_measured_at_same' => $latestMeasuredAt,
+            ':latest_id_same' => $latestId,
         ]);
 
-        $statusSince = null;
+        $previousDifferent = $stmt->fetch();
+        $params = [
+            ':favorite_id' => $favoriteId,
+            ':status_bucket' => $currentBucket,
+            ':latest_measured_at' => $latestMeasuredAt,
+            ':latest_measured_at_same' => $latestMeasuredAt,
+            ':latest_id' => $latestId,
+        ];
 
-        foreach ($stmt->fetchAll() as $row) {
-            if ((string)$row['status_bucket'] !== $currentBucket) {
-                break;
-            }
+        $afterPreviousDifferent = '';
 
-            $statusSince = (string)$row['measured_at'];
+        if (is_array($previousDifferent)) {
+            $afterPreviousDifferent = "
+               AND (
+                   measured_at > :previous_measured_at
+                   OR (measured_at = :previous_measured_at_same AND id > :previous_id)
+               )";
+            $params[':previous_measured_at'] = (string)$previousDifferent['measured_at'];
+            $params[':previous_measured_at_same'] = (string)$previousDifferent['measured_at'];
+            $params[':previous_id'] = (int)$previousDifferent['id'];
         }
 
+        $stmt = $this->pdo->prepare(
+            "SELECT measured_at
+             FROM incharge_chargepoint_snapshots
+             WHERE favorite_id = :favorite_id
+               AND status_bucket = :status_bucket" . $afterPreviousDifferent . "
+               AND (
+                   measured_at < :latest_measured_at
+                   OR (measured_at = :latest_measured_at_same AND id <= :latest_id)
+               )
+             ORDER BY measured_at ASC, id ASC
+             LIMIT 1"
+        );
+        $stmt->execute($params);
+        $statusSince = $stmt->fetch();
+
         return [
-            'status_since' => $statusSince ?: date('Y-m-d H:i:s'),
+            'status_since' => is_array($statusSince) ? (string)$statusSince['measured_at'] : date('Y-m-d H:i:s'),
         ];
     }
 
