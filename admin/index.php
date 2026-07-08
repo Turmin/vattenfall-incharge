@@ -339,6 +339,10 @@ if ($isLoggedIn) {
                 ];
                 $_SESSION['admin_activity'] = array_slice($_SESSION['admin_activity'], -6);
 
+                if ($action === 'db_query_execute') {
+                    redirectAdmin();
+                }
+
                 redirectAdmin([
                     'type' => ($result['success'] ?? false) ? 'success' : 'danger',
                     'messages' => $result['messages'] ?? ['Actie afgerond.'],
