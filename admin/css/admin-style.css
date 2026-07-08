@@ -113,6 +113,30 @@ body {
     overflow-wrap: anywhere;
 }
 
+.sql-editor {
+    min-height: 170px;
+    resize: vertical;
+}
+
+.query-result-table {
+    max-height: 420px;
+    border: 1px solid #dde7f1;
+    border-radius: 8px;
+}
+
+.query-result-table th,
+.query-result-table td {
+    max-width: 320px;
+    overflow-wrap: anywhere;
+}
+
+.query-result-table thead th {
+    position: sticky;
+    top: 0;
+    background: #f8fbfe;
+    z-index: 1;
+}
+
 @media (max-width: 420px) {
     .btn-group {
         display: grid;
