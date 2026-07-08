@@ -15,6 +15,8 @@ $credentialsFile = is_file($preferredCredentialsFile) || !is_file($legacyCredent
 $credentialsOutsideWebRoot = $credentialsFile === $preferredCredentialsFile;
 $flash = $_SESSION['admin_flash'] ?? null;
 unset($_SESSION['admin_flash']);
+$databaseQueryResult = $_SESSION['admin_database_query_result'] ?? null;
+unset($_SESSION['admin_database_query_result']);
 
 if (empty($_SESSION['admin_csrf'])) {
     $_SESSION['admin_csrf'] = bin2hex(random_bytes(32));
@@ -73,6 +75,94 @@ function cronTokenConfigured(array $config): bool
 function formatDateTime($value): string
 {
     return $value ? date('d-m-Y H:i', strtotime($value)) : '-';
+}
+
+function normalizeAdminSql(string $sql): string
+{
+    $sql = trim($sql);
+
+    if (substr($sql, -1) === ';') {
+        $sql = rtrim(substr($sql, 0, -1));
+    }
+
+    return $sql;
+}
+
+function adminSqlStatementType(string $sql): string
+{
+    if (!preg_match('/^\s*([a-z]+)/i', $sql, $matches)) {
+        return '';
+    }
+
+    return strtolower($matches[1]);
+}
+
+function executeAdminDatabaseQuery(PDO $pdo, string $sql, bool $writeConfirmed): array
+{
+    $sql = normalizeAdminSql($sql);
+
+    if ($sql === '') {
+        throw new InvalidArgumentException('Voer een SQL-query in.');
+    }
+
+    if (strpos($sql, ';') !== false) {
+        throw new InvalidArgumentException('Voer maximaal een SQL-statement tegelijk uit.');
+    }
+
+    $statementType = adminSqlStatementType($sql);
+    $readStatements = ['select', 'show', 'describe', 'desc', 'explain'];
+    $writeStatements = ['insert', 'update', 'delete', 'replace', 'truncate'];
+    $isRead = in_array($statementType, $readStatements, true);
+    $isWrite = in_array($statementType, $writeStatements, true);
+
+    if (!$isRead && !$isWrite) {
+        throw new InvalidArgumentException('Alleen SELECT, SHOW, DESCRIBE, EXPLAIN, INSERT, UPDATE, DELETE, REPLACE en TRUNCATE zijn toegestaan.');
+    }
+
+    if ($isWrite && !$writeConfirmed) {
+        throw new InvalidArgumentException('Bevestig eerst dat je data wilt wijzigen of verwijderen.');
+    }
+
+    if ($isRead) {
+        $stmt = $pdo->query($sql);
+        $rows = [];
+        $columns = [];
+
+        for ($index = 0; $index < $stmt->columnCount(); $index++) {
+            $meta = $stmt->getColumnMeta($index);
+            $columns[] = (string)($meta['name'] ?? ('kolom_' . ($index + 1)));
+        }
+
+        while (($row = $stmt->fetch(PDO::FETCH_ASSOC)) !== false) {
+            if (count($rows) >= 200) {
+                break;
+            }
+
+            $rows[] = $row;
+        }
+
+        return [
+            'success' => true,
+            'type' => 'read',
+            'statement' => strtoupper($statementType),
+            'sql' => $sql,
+            'columns' => $columns,
+            'rows' => $rows,
+            'limited' => count($rows) >= 200,
+            'messages' => [count($rows) . ' rij(en) opgehaald' . (count($rows) >= 200 ? ' (maximaal 200 getoond).' : '.')],
+        ];
+    }
+
+    $affectedRows = $pdo->exec($sql);
+
+    return [
+        'success' => true,
+        'type' => 'write',
+        'statement' => strtoupper($statementType),
+        'sql' => $sql,
+        'affected_rows' => (int)$affectedRows,
+        'messages' => [(int)$affectedRows . ' rij(en) geraakt.'],
+    ];
 }
 
 $credentials = loadCredentials($credentialsFile);
@@ -213,6 +303,30 @@ if ($isLoggedIn) {
                     $result = $cron->deleteJob((int)($_POST['id'] ?? 0));
                 } else {
                     $result = $cron->runJob((int)($_POST['id'] ?? 0));
+                }
+            } elseif ($action === 'db_query_execute') {
+                if (!Schema::tablesExist($pdo)) {
+                    throw new RuntimeException('Database tabellen ontbreken. Draai setup eerst.');
+                }
+
+                try {
+                    $result = executeAdminDatabaseQuery(
+                        $pdo,
+                        (string)($_POST['sql'] ?? ''),
+                        !empty($_POST['confirm_write'])
+                    );
+                    $_SESSION['admin_database_query_result'] = $result;
+                } catch (Throwable $e) {
+                    $result = [
+                        'success' => false,
+                        'messages' => [$e->getMessage()],
+                    ];
+                    $_SESSION['admin_database_query_result'] = [
+                        'success' => false,
+                        'type' => 'error',
+                        'sql' => normalizeAdminSql((string)($_POST['sql'] ?? '')),
+                        'messages' => [$e->getMessage()],
+                    ];
                 }
             }
 
@@ -437,6 +551,89 @@ $activity = array_reverse($_SESSION['admin_activity'] ?? []);
                             </div>
                         </div>
                     </div>
+                </div>
+            </div>
+
+            <div class="admin-card">
+                <div class="card-body">
+                    <div class="d-flex flex-column flex-lg-row justify-content-between gap-3 mb-3">
+                        <div>
+                            <h2 class="h5 mb-1"><i class="bi bi-terminal text-primary me-2"></i>Database query</h2>
+                            <div class="small text-muted">Een enkel SQL-statement op de geconfigureerde InCharge-database.</div>
+                        </div>
+                    </div>
+
+                    <form method="post" class="database-query-form">
+                        <input type="hidden" name="csrf" value="<?= h($csrf) ?>">
+                        <input type="hidden" name="action" value="db_query_execute">
+                        <div class="mb-3">
+                            <label class="form-label" for="admin_sql">SQL</label>
+                            <textarea class="form-control mono sql-editor" id="admin_sql" name="sql" rows="7" spellcheck="false" placeholder="SELECT * FROM incharge_favorite_chargepoints LIMIT 20"><?= h($databaseQueryResult['sql'] ?? '') ?></textarea>
+                        </div>
+                        <div class="d-flex flex-column flex-md-row justify-content-between gap-3 align-items-md-center">
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" id="confirm_write" name="confirm_write" value="1">
+                                <label class="form-check-label" for="confirm_write">Bevestig data wijzigen of verwijderen</label>
+                            </div>
+                            <button class="btn btn-primary" type="submit"><i class="bi bi-play-fill me-1"></i>Uitvoeren</button>
+                        </div>
+                    </form>
+
+                    <?php if (is_array($databaseQueryResult)): ?>
+                        <div class="query-result mt-3">
+                            <?php if (($databaseQueryResult['success'] ?? false) === true): ?>
+                                <div class="alert alert-success mb-3">
+                                    <strong><?= h($databaseQueryResult['statement'] ?? 'SQL') ?></strong>
+                                    <?php foreach (($databaseQueryResult['messages'] ?? []) as $message): ?>
+                                        <div><?= h($message) ?></div>
+                                    <?php endforeach; ?>
+                                </div>
+
+                                <?php if (($databaseQueryResult['type'] ?? '') === 'read'): ?>
+                                    <?php
+                                    $columns = $databaseQueryResult['columns'] ?? [];
+                                    $rows = $databaseQueryResult['rows'] ?? [];
+                                    ?>
+                                    <?php if ($columns && $rows): ?>
+                                        <div class="table-responsive query-result-table">
+                                            <table class="table table-sm table-striped align-middle mb-0">
+                                                <thead>
+                                                <tr>
+                                                    <?php foreach ($columns as $column): ?>
+                                                        <th scope="col"><?= h($column) ?></th>
+                                                    <?php endforeach; ?>
+                                                </tr>
+                                                </thead>
+                                                <tbody>
+                                                <?php foreach ($rows as $row): ?>
+                                                    <tr>
+                                                        <?php foreach ($columns as $column): ?>
+                                                            <td>
+                                                                <?php if (array_key_exists((string)$column, $row) && $row[$column] !== null): ?>
+                                                                    <?= h((string)$row[$column]) ?>
+                                                                <?php else: ?>
+                                                                    <span class="text-muted">NULL</span>
+                                                                <?php endif; ?>
+                                                            </td>
+                                                        <?php endforeach; ?>
+                                                    </tr>
+                                                <?php endforeach; ?>
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    <?php else: ?>
+                                        <div class="text-muted">Geen rijen om te tonen.</div>
+                                    <?php endif; ?>
+                                <?php endif; ?>
+                            <?php else: ?>
+                                <div class="alert alert-danger mb-0">
+                                    <?php foreach (($databaseQueryResult['messages'] ?? ['Query mislukt.']) as $message): ?>
+                                        <div><?= h($message) ?></div>
+                                    <?php endforeach; ?>
+                                </div>
+                            <?php endif; ?>
+                        </div>
+                    <?php endif; ?>
                 </div>
             </div>
 
